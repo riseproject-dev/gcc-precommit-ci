@@ -1,14 +1,13 @@
 #
 # TODO: Root cause and file bugzilla
-# Postcommit: https://github.com/patrick-rivos/gcc-postcommit-ci/issues/160
+# Historical post-commit issue: 160
 #
 FAIL: gcc.target/riscv/rvv/autovec/binop/narrow_run-1.c (test for excess errors)
 
 #
 # Flaky runtime timeout
 # "WARNING: program timed out."
-# https://github.com/ewlu/gcc-precommit-ci/issues/809
-# https://github.com/ewlu/gcc-precommit-ci/issues/833
+# Historical pre-commit issues: 809, 833
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=113238
 #
 FAIL: gcc.dg/vect/tsvc/vect-tsvc-vpv.c
@@ -20,7 +19,7 @@ FAIL: gcc.dg/vect/tsvc/vect-tsvc-s1281.c
 
 #
 # Related to https://sourceware.org/bugzilla/show_bug.cgi?id=27566
-# https://github.com/ewlu/gcc-precommit-ci/issues/1880
+# Historical pre-commit issue: 1880
 #
 FAIL: gcc.target/riscv/rvv/autovec/partial/slp_run-2.c
 FAIL: gcc.target/riscv/rvv/autovec/gather-scatter/strided_load_run-2.c
