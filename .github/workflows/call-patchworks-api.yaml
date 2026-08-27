@@ -8,11 +8,16 @@ env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
 
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
 jobs:
   get-patch-info:
     runs-on: ubuntu-24.04
     environment: production
-    if: ${{ !github.event.issue.pull_request && (contains(github.event.comment.body, '/pass_') || contains(github.event.comment.body, '/warn_') || contains(github.event.comment.body, '/error_')) && (github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'COLLABORATOR') }}
+    if: ${{ vars.PATCHWORK_REPORTING_ENABLED == 'true' && !github.event.issue.pull_request && (contains(github.event.comment.body, '/pass_') || contains(github.event.comment.body, '/warn_') || contains(github.event.comment.body, '/error_')) && contains(format(',{0},', vars.PATCHWORK_OVERRIDE_USERS), format(',{0},', github.actor)) }}
     defaults:
       run:
         working-directory: riscv-gnu-toolchain
@@ -36,51 +41,71 @@ jobs:
 
       - name: Get patch-name
         id: patch-name
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
-          export title="${{ github.event.issue.title }}"
-          export PATCH_NAME=${title##* }
-          echo $PATCH_NAME
-          echo "patch_name=$PATCH_NAME" >> $GITHUB_OUTPUT
+          PATCH_NAME=${ISSUE_TITLE##* }
+          if [[ ! "$PATCH_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid patch artifact name: $PATCH_NAME" >&2
+            exit 1
+          fi
+          echo "$PATCH_NAME"
+          echo "patch_name=$PATCH_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Get check
         id: check
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
-          export temp=$(echo ${{ github.event.comment.body }} | cut -d '_' -f 2)
-          export CONTEXT=$(echo ${temp%% *})
-          if [ $CONTEXT == 'test' ]; then export CHECK=Testing; fi
-          if [ $CONTEXT == 'apply' ]; then export CHECK=Apply; export CONTEXT=apply-patch;  fi
-          if [ $CONTEXT == 'build' ]; then export CHECK=Build; fi
-          if [ $CONTEXT == 'lint' ]; then export CHECK=Lint; fi
-          echo $CHECK
-          echo $CONTEXT
-          echo "check=$CHECK" >> $GITHUB_OUTPUT
-          echo "context=$CONTEXT" >> $GITHUB_OUTPUT
+          COMMAND=${COMMENT_BODY%%$'\n'*}
+          if [[ ! "$COMMAND" =~ ^/(pass|warn|error)_(test|apply|build|lint)([[:space:]]|$) ]]; then
+            echo "Unsupported Patchwork override command" >&2
+            exit 1
+          fi
+          RESULT=${BASH_REMATCH[1]}
+          CONTEXT=${BASH_REMATCH[2]}
+          case "$CONTEXT" in
+            test) CHECK=Testing ;;
+            apply) CHECK=Apply; CONTEXT=apply-patch ;;
+            build) CHECK=Build ;;
+            lint) CHECK=Lint ;;
+          esac
+          echo "$CHECK"
+          echo "$CONTEXT"
+          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+          echo "check=$CHECK" >> "$GITHUB_OUTPUT"
+          echo "context=$CONTEXT" >> "$GITHUB_OUTPUT"
 
       - name: Download patch
         run: |
           mkdir temp
-          python ./scripts/download_artifact.py -name ${{ steps.patch-name.outputs.patch_name }}-downloaded-patches -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }} -outdir ./
+          python ./scripts/download_artifact.py -name "${{ steps.patch-name.outputs.patch_name }}-downloaded-patches" -repo "${PRECOMMIT_REPOSITORY}" -token '${{ secrets.GITHUB_TOKEN }}' -outdir ./
 
       - name: Extract patch
         run: |
-          unzip -o ${{ steps.patch-name.outputs.patch_name }}-downloaded-patches.zip
+          unzip -o "${{ steps.patch-name.outputs.patch_name }}-downloaded-patches.zip"
 
       - name: Get patch id
         id: patch-id
         run: |
-          export PATCH_ID=$(tail -n 1 ./patches/${{ steps.patch-name.outputs.patch_name }})
-          echo $PATCH_ID
-          echo "patch_id=$PATCH_ID" >> $GITHUB_OUTPUT
+          PATCH_ID=$(tail -n 1 "./patches/${{ steps.patch-name.outputs.patch_name }}")
+          if [[ ! "$PATCH_ID" =~ ^[0-9]+$ ]]; then
+            echo "Invalid Patchwork patch id: $PATCH_ID" >&2
+            exit 1
+          fi
+          echo "$PATCH_ID"
+          echo "patch_id=$PATCH_ID" >> "$GITHUB_OUTPUT"
 
     outputs:
       patch_name: ${{ steps.patch-name.outputs.patch_name }}
       patch_id: ${{ steps.patch-id.outputs.patch_id }}
       check: ${{ steps.check.outputs.check }}
       context: ${{ steps.check.outputs.context }}
+      result: ${{ steps.check.outputs.result }}
 
   report-pass:
     needs: [get-patch-info]
-    if: ${{ contains(github.event.comment.body, '/pass') }}
+    if: ${{ needs.get-patch-info.outputs.result == 'pass' && vars.PATCHWORK_REPORTING_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     environment: production
     defaults:
@@ -106,13 +131,13 @@ jobs:
 
       - name: Report pass
         run: |
-          if [ ${{ needs.get-patch-info.outputs.check }} == 'Apply' ]; then export DESC="Patch applied"; else export DESC="${{ needs.get-patch-info.outputs.check }} passed"; fi
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc "$DESC" -iid ${{ github.event.issue.number }} -state 'success' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
+          if [[ '${{ needs.get-patch-info.outputs.check }}' == 'Apply' ]]; then DESC="Patch applied"; else DESC="${{ needs.get-patch-info.outputs.check }} passed"; fi
+          python scripts/post_check_to_patchworks.py -event '${{ github.event_name }}' -repo "${PRECOMMIT_REPOSITORY}" -pid '${{ needs.get-patch-info.outputs.patch_id }}' -desc "$DESC" -iid '${{ github.event.issue.number }}' -state 'success' -context '${{ needs.get-patch-info.outputs.context }}' -token '${{ secrets.PATCHWORK_API }}'
 
 
   report-warn:
     needs: [get-patch-info]
-    if: ${{ contains(github.event.comment.body, '/warn') }}
+    if: ${{ needs.get-patch-info.outputs.result == 'warn' && vars.PATCHWORK_REPORTING_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     environment: production
     defaults:
@@ -138,12 +163,12 @@ jobs:
 
       - name: Report Warning
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc '${{ needs.get-patch-info.outputs.check }} warning' -iid ${{ github.event.issue.number }} -state 'warning' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event '${{ github.event_name }}' -repo "${PRECOMMIT_REPOSITORY}" -pid '${{ needs.get-patch-info.outputs.patch_id }}' -desc '${{ needs.get-patch-info.outputs.check }} warning' -iid '${{ github.event.issue.number }}' -state 'warning' -context '${{ needs.get-patch-info.outputs.context }}' -token '${{ secrets.PATCHWORK_API }}'
 
 
   report-error:
     needs: [get-patch-info]
-    if: ${{ contains(github.event.comment.body, '/error') }}
+    if: ${{ needs.get-patch-info.outputs.result == 'error' && vars.PATCHWORK_REPORTING_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     environment: production
     defaults:
@@ -169,5 +194,5 @@ jobs:
 
       - name: Report Error
         run: |
-          if [ ${{ needs.get-patch-info.outputs.check }} == 'Apply' ]; then export DESC="Patch failed to apply"; else export DESC="${{ needs.get-patch-info.outputs.check }} failed"; fi
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc "$DESC" -iid ${{ github.event.issue.number }} -state 'fail' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
+          if [[ '${{ needs.get-patch-info.outputs.check }}' == 'Apply' ]]; then DESC="Patch failed to apply"; else DESC="${{ needs.get-patch-info.outputs.check }} failed"; fi
+          python scripts/post_check_to_patchworks.py -event '${{ github.event_name }}' -repo "${PRECOMMIT_REPOSITORY}" -pid '${{ needs.get-patch-info.outputs.patch_id }}' -desc "$DESC" -iid '${{ github.event.issue.number }}' -state 'fail' -context '${{ needs.get-patch-info.outputs.context }}' -token '${{ secrets.PATCHWORK_API }}'

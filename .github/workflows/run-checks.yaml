@@ -81,6 +81,8 @@ jobs:
     needs: [download_patches]
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
+      contents: read
       issues: write
     defaults:
       run:
@@ -196,6 +198,8 @@ jobs:
     needs: [download_patches, create-issue]
     uses: ./.github/workflows/lint.yaml
     permissions:
+      actions: read
+      contents: read
       issues: write
     with:
       patch_name: ${{ inputs.patch_name }}
@@ -342,19 +346,19 @@ jobs:
       - name: Report patch failed to apply to tip of tree
         if: ${{ steps.apply-baseline.outputs.apply_baseline == 'true' && steps.apply-tip-of-tree.outputs.apply_tot == 'false' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply to tip of tree.' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'warning' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply to tip of tree.' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'warning' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
         continue-on-error: true
 
       - name: Report patch applied to tip of tree successfully
         if: ${{ steps.apply-tip-of-tree.outputs.apply_tot == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch applied' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'success' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch applied' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'success' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
         continue-on-error: true
 
       - name: Report patch failed to apply anywhere
         if: ${{ steps.apply-failure.outputs.apply_failure == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'fail' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'fail' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
         continue-on-error: true
 
       - name: Add apply-failure label if patch failed to apply anywhere
@@ -464,7 +468,7 @@ jobs:
       - name: Update build only value for warning comparisons
         id: run-build-warning
         run: |
-          if [ "${{ inputs.build_only }}" == "true" ]; then
+          if [ "${{ needs.apply.outputs.build_only }}" == "true" ]; then
             echo "build_warning=true" >> $GITHUB_OUTPUT
           else
             echo "build_warning=run_warning" >> $GITHUB_OUTPUT
@@ -564,6 +568,8 @@ jobs:
     if: ${{ !cancelled() && needs.apply.outputs.apply_failure == 'false' }} # Generate github issues even when some (or all) targets fail to build. Ignore apply failures since there are no artifacts expected.
     needs: [download_patches, create-issue, apply, initialize-build-test-comments, cmreg-linux-sh, creg-sh]
     permissions:
+      actions: read
+      contents: read
       issues: write
     uses: ./.github/workflows/generate-precommit-summary.yaml
     with:
@@ -590,11 +596,14 @@ jobs:
 
       - name: Link Staging Issue to Original Issue
         uses: actions/github-script@v7
+        env:
+          ORIGINAL_PATCH_ISSUE_NUM: ${{ inputs.original_patch_issue_num }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         with:
           script: |
             github.rest.issues.createComment({
               issue_number: ${{ needs.create-issue.outputs.issue_num }},
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: 'Comparing against #${{ inputs.original_patch_issue_num }} for branch: ${{ github.event.pull_request.head.ref }}'
+              body: `Comparing against #${process.env.ORIGINAL_PATCH_ISSUE_NUM} for branch: ${process.env.HEAD_REF}`
             })

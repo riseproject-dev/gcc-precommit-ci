@@ -32,8 +32,6 @@ on:
         type: string
 
   workflow_dispatch:
-    branches:
-      - patchworks-ci
     inputs:
       baseline_hash:
         description: 'GCC Hash'
@@ -215,14 +213,14 @@ jobs:
 
       # Compare build warnings
       - name: Download patches artifact
-        if: ${{ needs.compare-artifacts.outputs.workflow_dispatch == 'true' }}
+        if: ${{ steps.dispatch.outputs.workflow_dispatch == 'true' }}
         run: |
           mkdir patches
           python ./scripts/download_artifact.py -name ${{ inputs.patch_name }}-downloaded-patches -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }} -outdir ./patches
           ls patches
 
       - name: Download patches artifact
-        if: ${{ needs.compare-artifacts.outputs.workflow_dispatch != 'true' }}
+        if: ${{ steps.dispatch.outputs.workflow_dispatch != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.patch_name }}-downloaded-patches
@@ -332,6 +330,8 @@ jobs:
     needs: [compare-artifacts]
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
+      contents: read
       issues: write
     defaults:
       run:
@@ -395,14 +395,14 @@ jobs:
         continue-on-error: true
 
       - name: Download patches artifact
-        if: ${{ needs.compare-artifacts.outputs.workflow_dispatch == 'true' }}
+        if: ${{ needs['compare-artifacts'].outputs.workflow_dispatch == 'true' }}
         run: |
           mkdir patches
           python ./scripts/download_artifact.py -name ${{ inputs.patch_name }}-downloaded-patches -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }} -outdir ./patches
           ls patches
 
       - name: Download patches artifact
-        if: ${{ needs.compare-artifacts.outputs.workflow_dispatch != 'true' }}
+        if: ${{ needs['compare-artifacts'].outputs.workflow_dispatch != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.patch_name }}-downloaded-patches

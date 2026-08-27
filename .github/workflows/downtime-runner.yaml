@@ -8,6 +8,8 @@ on:
 
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCHWORK_CHECK_USERNAME: ${{ vars.PATCHWORK_CHECK_USERNAME }}
+  PATCHWORK_FILTER_EMAILS: ${{ vars.PATCHWORK_FILTER_EMAILS }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
 
 jobs:
@@ -78,6 +80,9 @@ jobs:
     # This is a dedicated self hosted runner that will always* run this on time
     needs: [check_last_runner]
     runs-on: ubuntu-24.04
+    concurrency:
+      group: precommit-patchwork-fetch-${{ github.repository }}
+      cancel-in-progress: false
     if: ${{ needs.check_last_runner.outputs.start_date != '' }}
     defaults:
       run:
@@ -163,9 +168,7 @@ jobs:
     needs: [check_last_runner, fetch_patches]
     if: ${{ needs.fetch_patches.outputs.list_of_patch_names != '[]' }}
     uses: ./.github/workflows/init-submodules.yaml
-    with:
-      baseline_hash: ${{ inputs.baseline_gcc_hash }}
-      tot_hash: ${{ inputs.tip_of_tree_hash }}
+    secrets: inherit
 
   patch_matrix:
     needs: [check_last_runner, fetch_patches, init-submodules]
@@ -175,6 +178,8 @@ jobs:
         patch_name: ${{ fromJSON(needs.fetch_patches.outputs.list_of_patch_names) }}
     uses: ./.github/workflows/run-checks.yaml
     permissions:
+      actions: read
+      contents: read
       issues: write
     with:
       patch_name: ${{ matrix.patch_name }}
