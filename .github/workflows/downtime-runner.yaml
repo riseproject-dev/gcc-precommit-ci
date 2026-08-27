@@ -6,6 +6,10 @@ on:
     # https://stackoverflow.com/questions/59560214/github-action-works-on-push-but-not-scheduled
     - cron: 17 2 * * *
 
+env:
+  PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+
 jobs:
   check_last_runner:
     runs-on: ubuntu-24.04
@@ -39,7 +43,7 @@ jobs:
         run: |
           mkdir result
           mkdir temp
-          python ./scripts/download_artifact.py -name "downtime_runner_success" -repo ewlu/gcc-precommit-ci -token ${{ secrets.GITHUB_TOKEN }} -outdir result || true
+          python ./scripts/download_artifact.py -name "downtime_runner_success" -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }} -outdir result || true
           ls result
 
       - name: Check if artifact was found

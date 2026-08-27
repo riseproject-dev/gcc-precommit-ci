@@ -1,3 +1,4 @@
 [submodule "riscv-gnu-toolchain"]
 	path = riscv-gnu-toolchain
-	url = https://github.com/patrick-rivos/riscv-gnu-toolchain.git
+	url = https://github.com/riseproject-dev/riscv-gnu-toolchain-ci.git
+	branch = build-frequent

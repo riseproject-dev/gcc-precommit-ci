@@ -18,6 +18,10 @@ on:
         tot_hash:
           value: ${{ jobs.init-submodules.outputs.tot_hash }}
 
+env:
+  POSTCOMMIT_REPOSITORY: riseproject-dev/gcc-postcommit-ci
+  POSTCOMMIT_TOKEN: ${{ secrets.RISE_CI_READ_TOKEN }}
+
 jobs:
   init-submodules:
     runs-on: ubuntu-24.04
@@ -36,9 +40,16 @@ jobs:
       - name: Determine baseline
         id: baseline-hash
         run: |
-          python ./scripts/get_baseline_hash.py -token ${{ secrets.GITHUB_TOKEN }}
-
-          if [ '${{ inputs.baseline_hash }}' == '' ] ; then export BASELINE_HASH=$(cat baseline.txt); else export BASELINE_HASH=${{ inputs.baseline_hash }}; fi
+          if [ '${{ inputs.baseline_hash }}' == '' ] ; then
+            if [ -z "${POSTCOMMIT_TOKEN}" ]; then
+              echo "::error::RISE_CI_READ_TOKEN is required to read baseline issues from ${POSTCOMMIT_REPOSITORY}."
+              exit 1
+            fi
+            python ./scripts/get_baseline_hash.py -repo "${POSTCOMMIT_REPOSITORY}" -token "${POSTCOMMIT_TOKEN}"
+            export BASELINE_HASH=$(cat baseline.txt)
+          else
+            export BASELINE_HASH=${{ inputs.baseline_hash }}
+          fi
           echo $BASELINE_HASH
           echo "baseline_hash=$BASELINE_HASH" >> $GITHUB_OUTPUT
 

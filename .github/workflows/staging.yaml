@@ -28,6 +28,10 @@ on:
         description: 'Issue number to link against'
         required: false
 
+env:
+  PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+
 jobs:
   run-scheduled:
     if: ${{ github.event_name == 'schedule' }}
@@ -56,7 +60,7 @@ jobs:
     secrets: inherit
 
   get-patch-info:
-    runs-on: [self-hosted, ping]
+    runs-on: [self-hosted, linux, x64, ping]
     if: ${{ github.event_name == 'pull_request' }}
     defaults:
       run:
@@ -86,7 +90,7 @@ jobs:
       - name: Get patch data
         id: data
         run: |
-          python scripts/get_staging_patch.py -repo ewlu/gcc-precommit-ci -token ${{ secrets.GITHUB_TOKEN }}
+          python scripts/get_staging_patch.py -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }}
           echo "timestamp=$(cat timestamp.txt)" >> $GITHUB_OUTPUT
           echo "baseline_hash=$(cat baseline_hash.txt)" >> $GITHUB_OUTPUT
           echo "tot_hash=$(cat tot_hash.txt)" >> $GITHUB_OUTPUT

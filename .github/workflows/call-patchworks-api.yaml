@@ -4,11 +4,15 @@ on:
   issue_comment:
     types: [created]
 
+env:
+  PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+
 jobs:
   get-patch-info:
     runs-on: ubuntu-24.04
     environment: production
-    if: ${{ !github.event.issue.pull_request && (contains(github.event.comment.body, '/pass_') || contains(github.event.comment.body, '/warn_') || contains(github.event.comment.body, '/error_')) && (github.event.comment.user.login == 'ewlu' || github.event.comment.user.login == 'patrick-rivos') }}
+    if: ${{ !github.event.issue.pull_request && (contains(github.event.comment.body, '/pass_') || contains(github.event.comment.body, '/warn_') || contains(github.event.comment.body, '/error_')) && (github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'COLLABORATOR') }}
     defaults:
       run:
         working-directory: riscv-gnu-toolchain
@@ -55,7 +59,7 @@ jobs:
       - name: Download patch
         run: |
           mkdir temp
-          python ./scripts/download_artifact.py -name ${{ steps.patch-name.outputs.patch_name }}-downloaded-patches -repo "ewlu/gcc-precommit-ci" -token ${{ secrets.GITHUB_TOKEN }} -outdir ./
+          python ./scripts/download_artifact.py -name ${{ steps.patch-name.outputs.patch_name }}-downloaded-patches -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }} -outdir ./
 
       - name: Extract patch
         run: |
@@ -103,7 +107,7 @@ jobs:
       - name: Report pass
         run: |
           if [ ${{ needs.get-patch-info.outputs.check }} == 'Apply' ]; then export DESC="Patch applied"; else export DESC="${{ needs.get-patch-info.outputs.check }} passed"; fi
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc "$DESC" -iid ${{ github.event.issue.number }} -state 'success' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc "$DESC" -iid ${{ github.event.issue.number }} -state 'success' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
 
 
   report-warn:
@@ -134,7 +138,7 @@ jobs:
 
       - name: Report Warning
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc '${{ needs.get-patch-info.outputs.check }} warning' -iid ${{ github.event.issue.number }} -state 'warning' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc '${{ needs.get-patch-info.outputs.check }} warning' -iid ${{ github.event.issue.number }} -state 'warning' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
 
 
   report-error:
@@ -166,4 +170,4 @@ jobs:
       - name: Report Error
         run: |
           if [ ${{ needs.get-patch-info.outputs.check }} == 'Apply' ]; then export DESC="Patch failed to apply"; else export DESC="${{ needs.get-patch-info.outputs.check }} failed"; fi
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc "$DESC" -iid ${{ github.event.issue.number }} -state 'fail' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid ${{ needs.get-patch-info.outputs.patch_id }} -desc "$DESC" -iid ${{ github.event.issue.number }} -state 'fail' -context '${{ needs.get-patch-info.outputs.context }}' -token ${{ secrets.PATCHWORK_API }}

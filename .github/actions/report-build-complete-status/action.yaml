@@ -40,6 +40,9 @@ inputs:
   patchwork_token:
     description: 'patchwork token'
     required: true
+  repository:
+    description: 'owner/repo for pre-commit status issues and Patchwork detail links'
+    required: true
 
 runs:
   using: "composite"
@@ -50,7 +53,7 @@ runs:
         working-directory: riscv-gnu-toolchain
         run: |
           if [ '${{ inputs.build_only }}' == 'true' ]; then export HASH=${{ inputs.tot_hash }}; else export HASH=${{ inputs.baseline_hash }}; fi
-          python scripts/update_issue_status.py -token ${{ inputs.github_token }} -state 'Success' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.target }} -check 'Build GCC' -repo ewlu/gcc-precommit-ci -baseline $HASH
+          python scripts/update_issue_status.py -token ${{ inputs.github_token }} -state 'Success' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.target }} -check 'Build GCC' -repo '${{ inputs.repository }}' -baseline $HASH
           printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
 
       - name: Build combined stdout/stderr gist
@@ -91,7 +94,7 @@ runs:
         working-directory: riscv-gnu-toolchain
         run: |
           if [ '${{ inputs.build_only }}' == 'true' ]; then export HASH=${{ inputs.tot_hash }}; else export HASH=${{ inputs.baseline_hash }}; fi
-          python scripts/update_issue_status.py -token ${{ inputs.github_token }} -state 'Build failure. Please check the ${{ inputs.build_log_name }} artifact. [Tail Preview (1MB)](${{ steps.tail-gist-url.outputs.gist_url }}), [Stderr preview](${{ steps.stderr-gist-url.outputs.gist_url }})' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.target }} -check 'Build GCC' -repo ewlu/gcc-precommit-ci -baseline $HASH
+          python scripts/update_issue_status.py -token ${{ inputs.github_token }} -state 'Build failure. Please check the ${{ inputs.build_log_name }} artifact. [Tail Preview (1MB)](${{ steps.tail-gist-url.outputs.gist_url }}), [Stderr preview](${{ steps.stderr-gist-url.outputs.gist_url }})' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.target }} -check 'Build GCC' -repo '${{ inputs.repository }}' -baseline $HASH
           printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
 
       - name: Update build complete report comment
@@ -118,7 +121,7 @@ runs:
         shell: bash
         working-directory: riscv-gnu-toolchain
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'fail' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'fail' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
         continue-on-error: true
 
       - name: Report build success
@@ -126,5 +129,5 @@ runs:
         shell: bash
         working-directory: riscv-gnu-toolchain
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'success' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'success' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
         continue-on-error: true

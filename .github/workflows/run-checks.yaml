@@ -16,6 +16,11 @@ on:
         required: false
         type: string
 
+env:
+  PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  POSTCOMMIT_REPOSITORY: riseproject-dev/gcc-postcommit-ci
+  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+
 jobs:
   download_patches:
     runs-on: ubuntu-24.04
@@ -97,7 +102,7 @@ jobs:
       - name: Build initial issue
         run: |
           printf "## Precommit CI Run information\n" > issue.md
-          printf "Logs can be found in the associated Github Actions run: https://github.com/ewlu/gcc-precommit-ci/actions/runs/${{ github.run_id }}\n" >> issue.md
+          printf "Logs can be found in the associated Github Actions run: ${{ github.server_url }}/${PRECOMMIT_REPOSITORY}/actions/runs/${{ github.run_id }}\n" >> issue.md
           printf "## Patch information\n" >> issue.md
           head -n 3 patches/${{ inputs.patch_name }} >> issue.md
           # Issue closer depends on patch id
@@ -114,10 +119,10 @@ jobs:
           printf "|-|-|\n" >> issue.md
           printf "|Bitmanip|\`gc_zba_zbb_zbc_zbs\`|\n" >> issue.md
           printf "## Notes\n" >> issue.md
-          echo "Testsuite results use a more lenient allowlist to reduce error reporting with flakey tests. Please take a look at the current [allowlist](https://github.com/ewlu/gcc-precommit-ci/tree/main/test/allowlist)." >> issue.md
-          echo "Results come from a [sum file comparator](https://github.com/patrick-rivos/riscv-gnu-toolchain/blob/a0a8cabf8ca71bdfbb41e23ab599af9528af772c/scripts/compare_testsuite_log.py). Each patch is applied to a well known, non-broken baseline taken from our" >> issue.md
-          echo "gcc postcommit framework ([here](https://github.com/patrick-rivos/gcc-postcommit-ci/issues)) which runs the full gcc testsuite every 6 hours." >> issue.md
-          echo "If you have any questions or encounter any issues which may seem like false-positives, please contact us at patchworks-ci@rivosinc.com" >> issue.md
+          echo "Testsuite results use a more lenient allowlist to reduce error reporting with flaky tests. Please take a look at the current [allowlist](${{ github.server_url }}/${PRECOMMIT_REPOSITORY}/tree/main/test/allowlist)." >> issue.md
+          echo "Results come from a [sum file comparator](https://github.com/riseproject-dev/riscv-gnu-toolchain-ci/blob/build-frequent/scripts/compare_testsuite_log.py). Each patch is applied to a known non-broken baseline taken from the" >> issue.md
+          echo "GCC postcommit framework ([here](${{ github.server_url }}/${POSTCOMMIT_REPOSITORY}/issues)), which runs the full GCC testsuite regularly." >> issue.md
+          echo "If you have questions or see a likely false positive, open an issue in this repository." >> issue.md
           cat issue.md
 
       - name: Create initial issue
@@ -145,8 +150,8 @@ jobs:
         id: link
         run: |
           sleep 1
-          curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Token ${{ secrets.GITHUB_TOKEN }}" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/ewlu/gcc-precommit-ci/issues/${{ steps.create-issue.outputs.issue-number }} | jq '.id' > issue_body_comment_id.txt
-          export LINK=https://github.com/ewlu/gcc-precommit-ci/issues/${{ steps.create-issue.outputs.issue-number }}#issue-$(cat issue_body_comment_id.txt)
+          curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Token ${{ secrets.GITHUB_TOKEN }}" -H "X-GitHub-Api-Version: 2022-11-28" "${{ github.api_url }}/repos/${PRECOMMIT_REPOSITORY}/issues/${{ steps.create-issue.outputs.issue-number }}" | jq '.id' > issue_body_comment_id.txt
+          export LINK="${{ github.server_url }}/${PRECOMMIT_REPOSITORY}/issues/${{ steps.create-issue.outputs.issue-number }}#issue-$(cat issue_body_comment_id.txt)"
           echo $LINK
           echo "additional=$LINK" >> $GITHUB_OUTPUT
 
@@ -168,7 +173,7 @@ jobs:
 
       - name: Create apply pending report
         run: |
-          python scripts/generate_apply_report.py -patch ${{ inputs.patch_name }} -bhash ${{ inputs.baseline_hash }} -thash ${{ inputs.tot_hash }} -bstatus pending -tstatus pending -o comment.md
+          python scripts/generate_apply_report.py -patch ${{ inputs.patch_name }} -bhash ${{ inputs.baseline_hash }} -thash ${{ inputs.tot_hash }} -bstatus pending -tstatus pending --postcommit-repo "${POSTCOMMIT_REPOSITORY}" -o comment.md
           printf "\n[Additional information](${{ steps.link.outputs.additional }})\n" >> comment.md
 
       - name: Create apply report comment
@@ -309,7 +314,7 @@ jobs:
 
       - name: Build apply report
         run: |
-          python scripts/generate_apply_report.py -patch ${{ inputs.patch_name }} -bhash ${{ inputs.baseline_hash }} -thash ${{ inputs.tot_hash }} -bstatus ${{ steps.apply-baseline.outputs.apply_baseline }} -tstatus ${{ steps.apply-tip-of-tree.outputs.apply_tot }} -o comment.md
+          python scripts/generate_apply_report.py -patch ${{ inputs.patch_name }} -bhash ${{ inputs.baseline_hash }} -thash ${{ inputs.tot_hash }} -bstatus ${{ steps.apply-baseline.outputs.apply_baseline }} -tstatus ${{ steps.apply-tip-of-tree.outputs.apply_tot }} --postcommit-repo "${POSTCOMMIT_REPOSITORY}" -o comment.md
           head -c 65000 comment.md > trimmed_comment.md
           if [ $(cat trimmed_comment.md | wc -l) -ne $(cat comment.md | wc -l) ]; then printf "\n\`\`\`\nComment text has been trimmed. Please check logs for the untrimmed comment." >> trimmed_comment.md; fi
           printf "\n[Additional information](${{ needs.create-issue.outputs.additional_info }})\n" >> trimmed_comment.md
@@ -337,19 +342,19 @@ jobs:
       - name: Report patch failed to apply to tip of tree
         if: ${{ steps.apply-baseline.outputs.apply_baseline == 'true' && steps.apply-tip-of-tree.outputs.apply_tot == 'false' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply to tip of tree.' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'warning' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply to tip of tree.' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'warning' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
         continue-on-error: true
 
       - name: Report patch applied to tip of tree successfully
         if: ${{ steps.apply-tip-of-tree.outputs.apply_tot == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch applied' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'success' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch applied' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'success' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
         continue-on-error: true
 
       - name: Report patch failed to apply anywhere
         if: ${{ steps.apply-failure.outputs.apply_failure == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'fail' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'fail' -context 'apply-patch' -token ${{ secrets.PATCHWORK_API }}
         continue-on-error: true
 
       - name: Add apply-failure label if patch failed to apply anywhere
@@ -451,7 +456,7 @@ jobs:
       - name: Report test warning on build only
         if: ${{ needs.apply.outputs.build_only == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing skipped' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ steps.test-comment.outputs.comment-id }}' -state 'warning' -context 'test' -token '${{ secrets.PATCHWORK_API }}' -repo ewlu/gcc-precommit-ci
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing skipped' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ steps.test-comment.outputs.comment-id }}' -state 'warning' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
         continue-on-error: true
 
         # If the patch does not apply to baseline, we need to run the build warning
