@@ -45,6 +45,11 @@ Set `PATCHWORK_REPORTING_ENABLED=true` only after those checks. A missing token,
 non-2xx Patchwork response, unexpected username, or legacy `toolchain-ci-rivos-`
 context is a production failure, not a warning to ignore.
 
+Patchwork publishing steps fail their job when the shared helper rejects the
+request. In shadow mode the helper exits successfully without sending it.
+Missing target reports and invalid aggregate summaries must never be reported
+as passing tests.
+
 ## Failure Triage
 
 - Apply failures: check series order and prerequisites. Distinguish a patch that
@@ -56,6 +61,19 @@ context is a production failure, not a warning to ignore.
   upstream or RISE tracking issue.
 - Random infrastructure failures: rerun only after capturing the failure class,
   runner label, and run URL. Repeated cases need an owned incident issue.
+
+For a failed summary job, use **Re-run failed jobs** on the original Actions run
+while its artifacts are retained. This preserves the original workflow inputs,
+issue/comment IDs, and run artifacts. If those artifacts have expired, dispatch
+`Patchworks` again for the patch and inspect the new run's complete results.
+`Generate-Summary` is available only through `workflow_call`: its former
+standalone dispatch did not supply the issue/comment IDs or source-run context
+required to publish a safe report.
+
+The nightly recovery checkpoint advances only after a successful scan with no
+patches, or after every recovered patch finishes successfully. Failed or
+cancelled processing retains the previous checkpoint for the next scan. A red
+recovery run therefore needs attention even if some patch issues look complete.
 
 ## Runner Safety
 

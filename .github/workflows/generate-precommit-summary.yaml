@@ -31,18 +31,6 @@ on:
         required: true
         type: string
 
-  workflow_dispatch:
-    inputs:
-      baseline_hash:
-        description: 'GCC Hash'
-        required: true
-      patch_applied_gcchash:
-        description: 'GCC Hash of applied commit'
-        required: true
-      patch_name:
-        description: 'Patch name to regenerate summary for'
-        required: true
-
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   POSTCOMMIT_REPOSITORY: riseproject-dev/gcc-postcommit-ci
@@ -54,6 +42,10 @@ jobs:
     if: ${{ always() && inputs.build_only != 'true' }} # ensure comparison always runs even on error
     runs-on: ubuntu-24.04
     environment: production
+    permissions:
+      actions: read
+      contents: read
+      issues: read
     defaults:
       run:
         working-directory: riscv-gnu-toolchain
@@ -64,12 +56,6 @@ jobs:
         uses: ./.github/actions/common/setup-env
         with:
           free_up_space: false
-
-      - name: Check workflow dispatch
-        id: dispatch
-        if: ${{ inputs.tot_hash == '' }} # tot_hash always set at apply tip of tree step in run-checks.yaml
-        run: |
-          echo "workflow_dispatch=true" >> $GITHUB_OUTPUT
 
       - name: Create directories
         run: |
@@ -213,14 +199,6 @@ jobs:
 
       # Compare build warnings
       - name: Download patches artifact
-        if: ${{ steps.dispatch.outputs.workflow_dispatch == 'true' }}
-        run: |
-          mkdir patches
-          python ./scripts/download_artifact.py -name ${{ inputs.patch_name }}-downloaded-patches -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }} -outdir ./patches
-          ls patches
-
-      - name: Download patches artifact
-        if: ${{ steps.dispatch.outputs.workflow_dispatch != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.patch_name }}-downloaded-patches
@@ -323,7 +301,6 @@ jobs:
 
     outputs:
       baseline_hash: ${{ inputs.baseline_hash }}
-      workflow_dispatch: ${{ steps.dispatch.outputs.workflow_dispatch }}
 
   generate-issues:
     if: ${{ always() && inputs.build_only != 'true' }} # ensure generate issues always runs even on error
@@ -395,14 +372,6 @@ jobs:
         continue-on-error: true
 
       - name: Download patches artifact
-        if: ${{ needs['compare-artifacts'].outputs.workflow_dispatch == 'true' }}
-        run: |
-          mkdir patches
-          python ./scripts/download_artifact.py -name ${{ inputs.patch_name }}-downloaded-patches -repo "${PRECOMMIT_REPOSITORY}" -token ${{ secrets.GITHUB_TOKEN }} -outdir ./patches
-          ls patches
-
-      - name: Download patches artifact
-        if: ${{ needs['compare-artifacts'].outputs.workflow_dispatch != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.patch_name }}-downloaded-patches
@@ -504,6 +473,23 @@ jobs:
               labels: ['resolved-regressions']
             })
 
+      - name: Add incomplete result labels
+        if: ${{ contains(steps.issue-labels.outputs.issue_labels, 'testsuite-failure') || contains(steps.issue-labels.outputs.issue_labels, 'invalid') }}
+        uses: actions/github-script@v7
+        env:
+          RESULT_LABELS: ${{ steps.issue-labels.outputs.issue_labels }}
+        with:
+          script: |
+            const labels = process.env.RESULT_LABELS.split(',').filter(
+              label => ['testsuite-failure', 'invalid'].includes(label)
+            );
+            await github.rest.issues.addLabels({
+              issue_number: ${{ inputs.issue_num }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels
+            });
+
       # Adds comment which links issue to PR
       - name: Link Staging PR
         uses: actions/github-script@v7
@@ -518,15 +504,13 @@ jobs:
             })
 
       - name: Report Failure
-        if: ${{ github.workflow != 'Staging' && (contains(steps.issue-labels.outputs.issue_labels, 'build-failure') || contains(steps.issue-labels.outputs.issue_labels, 'testsuite-failure') || contains(steps.issue-labels.outputs.issue_labels, 'new-regressions')) }}
+        if: ${{ github.workflow != 'Staging' && (contains(steps.issue-labels.outputs.issue_labels, 'build-failure') || contains(steps.issue-labels.outputs.issue_labels, 'testsuite-failure') || contains(steps.issue-labels.outputs.issue_labels, 'new-regressions') || contains(steps.issue-labels.outputs.issue_labels, 'invalid')) }}
         id: report-failure
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 ./patches/${{ inputs.patch_name }}) -desc 'Testing failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'fail' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Report Success
         if: ${{ github.workflow != 'Staging' && steps.report-failure.outcome == 'skipped' }}
         id: report-success
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 ./patches/${{ inputs.patch_name }}) -desc 'Testing passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'success' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true

@@ -6,6 +6,10 @@ on:
     # https://stackoverflow.com/questions/59560214/github-action-works-on-push-but-not-scheduled
     - cron: 17 2 * * *
 
+permissions:
+  actions: read
+  contents: read
+
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_CHECK_USERNAME: ${{ vars.PATCHWORK_CHECK_USERNAME }}
@@ -110,6 +114,7 @@ jobs:
           sudo apt install zip -y
 
       - name: Get Timestamps
+        id: timestamps
         run: |
           TZ=UTC date -d "$(date -d 'yesterday' '+%Y-%m-%d')" "+%Y-%m-%dT%H:%M:%S" > yesterday_date.txt
           YESTERDAY=$(cat yesterday_date.txt)
@@ -120,6 +125,7 @@ jobs:
           echo "timestamps"
           echo "start time: $(cat start_date.txt)"
           echo "end time: $(cat end_date.txt)"
+          echo "end_date=$(cat end_date.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Perform patch checks
         run: |
@@ -163,12 +169,37 @@ jobs:
 
     outputs:
       list_of_patch_names: ${{ steps.list_patches.outputs.patch_list }}
+      end_date: ${{ steps.timestamps.outputs.end_date }}
 
   init-submodules:
     needs: [check_last_runner, fetch_patches]
     if: ${{ needs.fetch_patches.outputs.list_of_patch_names != '[]' }}
     uses: ./.github/workflows/init-submodules.yaml
     secrets: inherit
+
+  checkpoint:
+    needs: [check_last_runner, fetch_patches, init-submodules, patch_matrix]
+    # Empty queues intentionally skip the downstream jobs. Failed or cancelled
+    # processing must retain the old checkpoint so the next scan can retry it.
+    if: ${{ !cancelled() && needs.check_last_runner.result == 'success' && needs.fetch_patches.result == 'success' && (needs.fetch_patches.outputs.list_of_patch_names == '[]' || (needs.init-submodules.result == 'success' && needs.patch_matrix.result == 'success')) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Record completed recovery window
+        env:
+          RECOVERY_END_DATE: ${{ needs.fetch_patches.outputs.end_date }}
+        run: |
+          test -n "$RECOVERY_END_DATE"
+          printf '%s\n' "$RECOVERY_END_DATE" > end_date.txt
+
+      - name: Upload success artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: downtime_runner_success
+          path: end_date.txt
+          if-no-files-found: error
+          retention-days: 90
 
   patch_matrix:
     needs: [check_last_runner, fetch_patches, init-submodules]

@@ -43,6 +43,11 @@ on:
         required: true
         type: string
 
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
@@ -113,7 +118,6 @@ jobs:
         if: ${{ github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'pending' -context 'build--${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Make log name
         id: build-log
@@ -213,7 +217,6 @@ jobs:
         if: ${{ github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'pending' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Install dependencies
         run: |
@@ -430,7 +433,6 @@ jobs:
         if: ${{ github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'pending' -context 'build--${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Make log name
         id: build-log
@@ -506,7 +508,6 @@ jobs:
         if: ${{ inputs.build_only == 'false' && github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'pending' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Replace allowlist
         run: |

@@ -18,6 +18,10 @@ on:
         tot_hash:
           value: ${{ jobs.init-submodules.outputs.tot_hash }}
 
+permissions:
+  actions: read
+  contents: read
+
 env:
   POSTCOMMIT_REPOSITORY: riseproject-dev/gcc-postcommit-ci
   POSTCOMMIT_TOKEN: ${{ secrets.RISE_CI_READ_TOKEN }}

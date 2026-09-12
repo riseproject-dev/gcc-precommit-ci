@@ -22,7 +22,7 @@ runs:
       continue-on-error: true
 
     - name: Download report from another workflow
-      if: ${{ !cancelled() && hashFiles(format('./current_logs/{0}', inputs.report-artifact-name)) == '' }}
+      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' }}
       shell: bash
       run: |
         cd riscv-gnu-toolchain
@@ -30,7 +30,8 @@ runs:
       continue-on-error: true
 
     - name: Download rv32 non-multilib binary
-      if: ${{ !cancelled() && hashFiles(format('./current_logs/{0}', inputs.report-artifact-name)) == '' }}
+      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' }}
+      id: same-workflow-binary
       uses: actions/download-artifact@v4
       with:
         name: ${{ inputs.binary-artifact-name }}
@@ -38,9 +39,18 @@ runs:
       continue-on-error: true
 
     - name: Download binary from another workflow
-      if: ${{ !cancelled() && hashFiles(format('./current_logs/{0}', inputs.report-artifact-name)) == '' && hashFiles(format('./temp/{0}', inputs.binary-artifact-name)) == '' }}
+      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' && steps.same-workflow-binary.outcome == 'failure' }}
       shell: bash
       run: |
         cd riscv-gnu-toolchain
         python ./scripts/download_artifact.py -name ${{ inputs.binary-artifact-name }} -repo ${{ inputs.repo }} -token ${{ inputs.github-token }} -outdir temp
       continue-on-error: true
+
+    - name: Record missing testsuite report
+      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' }}
+      shell: bash
+      env:
+        REPORT_ARTIFACT_NAME: ${{ inputs.report-artifact-name }}
+      run: |
+        mkdir -p riscv-gnu-toolchain/current_logs
+        printf '%s|Testsuite report artifact could not be downloaded\n' "$REPORT_ARTIFACT_NAME" >> riscv-gnu-toolchain/current_logs/failed_testsuite.txt

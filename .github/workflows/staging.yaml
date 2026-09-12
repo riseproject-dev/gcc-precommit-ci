@@ -26,6 +26,11 @@ on:
         description: 'Issue number to link against'
         required: false
 
+permissions:
+  actions: read
+  contents: read
+  issues: read
+
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}

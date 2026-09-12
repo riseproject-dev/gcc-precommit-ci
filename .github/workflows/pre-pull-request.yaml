@@ -28,5 +28,9 @@ jobs:
         run: |
           python scripts/check_migration_guards.py
 
+      - name: Test workflow recovery
+        run: |
+          python -m unittest discover -s tests -v
+
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1

@@ -122,7 +122,6 @@ runs:
         working-directory: riscv-gnu-toolchain
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'fail' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
-        continue-on-error: true
 
       - name: Report build success
         if: ${{ inputs.build_status == 'success' && github.workflow != 'Staging' }}
@@ -130,4 +129,3 @@ runs:
         working-directory: riscv-gnu-toolchain
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'success' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
-        continue-on-error: true

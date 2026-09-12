@@ -40,6 +40,10 @@ on:
         description: 'Issue number to link against'
         required: false
 
+permissions:
+  actions: read
+  contents: read
+
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_CHECK_USERNAME: ${{ vars.PATCHWORK_CHECK_USERNAME }}

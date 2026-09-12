@@ -347,19 +347,16 @@ jobs:
         if: ${{ steps.apply-baseline.outputs.apply_baseline == 'true' && steps.apply-tip-of-tree.outputs.apply_tot == 'false' && github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply to tip of tree.' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'warning' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Report patch applied to tip of tree successfully
         if: ${{ steps.apply-tip-of-tree.outputs.apply_tot == 'true' && github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch applied' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'success' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Report patch failed to apply anywhere
         if: ${{ steps.apply-failure.outputs.apply_failure == 'true' && github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'fail' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
       - name: Add apply-failure label if patch failed to apply anywhere
         if: ${{ steps.apply-failure.outputs.apply_failure == 'true' }}
@@ -461,7 +458,6 @@ jobs:
         if: ${{ needs.apply.outputs.build_only == 'true' && github.workflow != 'Staging' }}
         run: |
           python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing skipped' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ steps.test-comment.outputs.comment-id }}' -state 'warning' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
-        continue-on-error: true
 
         # If the patch does not apply to baseline, we need to run the build warning
         # comparisons against tip of tree and not the baseline hash.
@@ -522,6 +518,10 @@ jobs:
         target: [rv64gc_zba_zbb_zbc_zbs-lp64d] # Dummy placeholder. Actually runs rv32/rv64 multilib
         multilib: [multilib]
     uses: ./.github/workflows/test-regression.yaml
+    permissions:
+      actions: read
+      contents: read
+      issues: write
     with:
       patch_name: ${{ inputs.patch_name }}
       mode: ${{ matrix.mode }}
@@ -548,6 +548,10 @@ jobs:
           [ rv64gcv-lp64d ] # Dummy placeholder. runs rv32/64gcv
         multilib: [multilib]
     uses: ./.github/workflows/test-regression.yaml
+    permissions:
+      actions: read
+      contents: read
+      issues: write
     with:
       patch_name: ${{ inputs.patch_name }}
       mode: ${{ matrix.mode }}

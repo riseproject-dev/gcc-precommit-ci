@@ -78,12 +78,7 @@ jobs:
 
       - name: Download patch
         run: |
-          mkdir temp
-          python ./scripts/download_artifact.py -name "${{ steps.patch-name.outputs.patch_name }}-downloaded-patches" -repo "${PRECOMMIT_REPOSITORY}" -token '${{ secrets.GITHUB_TOKEN }}' -outdir ./
-
-      - name: Extract patch
-        run: |
-          unzip -o "${{ steps.patch-name.outputs.patch_name }}-downloaded-patches.zip"
+          python ./scripts/download_artifact.py -name "${{ steps.patch-name.outputs.patch_name }}-downloaded-patches" -repo "${PRECOMMIT_REPOSITORY}" -token '${{ secrets.GITHUB_TOKEN }}' -outdir ./patches
 
       - name: Get patch id
         id: patch-id
