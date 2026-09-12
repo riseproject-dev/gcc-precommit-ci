@@ -6,6 +6,9 @@ on:
     # https://stackoverflow.com/questions/59560214/github-action-works-on-push-but-not-scheduled
     - cron: 17 2 * * *
 
+env:
+  PRECOMMIT_REPOSITORY: ${{ github.repository }}
+
 jobs:
   close-issues:
     runs-on: ubuntu-24.04
@@ -13,6 +16,7 @@ jobs:
       run:
         working-directory: riscv-gnu-toolchain
     permissions:
+      contents: read
       issues: write
     steps:
       - uses: actions/checkout@v4
@@ -38,4 +42,4 @@ jobs:
 
       - name: Close issues
         run: |
-          python scripts/close_old_issues.py -token ${{ secrets.GITHUB_TOKEN }}
+          python scripts/close_old_issues.py -token ${{ secrets.GITHUB_TOKEN }} -repo "${PRECOMMIT_REPOSITORY}"

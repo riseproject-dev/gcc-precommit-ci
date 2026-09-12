@@ -9,6 +9,9 @@ inputs:
   output-dir:
     required: true
     description: 'Absolute Path to the artifact directory'
+  repository:
+    required: true
+    description: 'owner/repo to read baseline build-log artifacts from'
 
 runs:
   using: "composite"
@@ -24,7 +27,7 @@ runs:
         build-artifact-name: linux-rv64gc-lp64d-${{ inputs.gcchash }}-non-multilib-build-log
         github-token: ${{ inputs.github-token }}
         output-dir: ${{ inputs.output-dir }}
-        repository: patrick-rivos/gcc-postcommit-ci
+        repository: ${{ inputs.repository }}
 
     - name: Download newlib rv64gc non-multilib
       uses: ./.github/actions/common/download-build-log-artifact
@@ -32,9 +35,9 @@ runs:
         build-artifact-name: newlib-rv64gc-lp64d-${{ inputs.gcchash }}-non-multilib-build-log
         github-token: ${{ inputs.github-token }}
         output-dir: ${{ inputs.output-dir }}
-        repository: patrick-rivos/gcc-postcommit-ci
+        repository: ${{ inputs.repository }}
 
-    #TODO: Support Multilib. Restriction: https://github.com/ewlu/gcc-precommit-ci/pull/1919#discussion_r1686874053
+    # TODO: Support multilib build log comparison; see historical discussion in pull request 1919.
 
     - name: Print downloaded artifacts
       shell: bash

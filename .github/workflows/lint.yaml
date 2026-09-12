@@ -19,11 +19,17 @@ on:
         required: true
         type: string
 
+env:
+  PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+
 jobs:
   lint:
     runs-on: ubuntu-24.04
     environment: production
     permissions:
+      actions: read
+      contents: read
       issues: write
     defaults:
       run:
@@ -61,7 +67,7 @@ jobs:
       - name: Report start linter
         if: ${{ github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint starting' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'pending' -context 'lint' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint starting' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'pending' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'
 
       # Only lint the last patch in the series since that's where the warning will be displayed
       - name: Lint patch
@@ -117,7 +123,7 @@ jobs:
       - name: Report linter warning
         if: ${{ steps.lint.outputs.lint_failed == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'warning' -context 'lint' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'warning' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'
 
       - name: Make lint passed comment
         if: ${{ steps.lint.outputs.lint_failed == 'false' }}
@@ -139,4 +145,4 @@ jobs:
       - name: Report linter success
         if: ${{ steps.lint.outputs.lint_failed == 'false' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo ewlu/gcc-precommit-ci -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'success' -context 'lint' -token ${{ secrets.PATCHWORK_API }}
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'success' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'

@@ -23,8 +23,6 @@ on:
         description: 'Issue number to link against'
         type: string
   workflow_dispatch:
-    branches:
-      - main
     inputs:
       timestamp:
         description: 'Patch Timestamp (UTC)'
@@ -42,10 +40,23 @@ on:
         description: 'Issue number to link against'
         required: false
 
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCHWORK_CHECK_USERNAME: ${{ vars.PATCHWORK_CHECK_USERNAME }}
+  PATCHWORK_FILTER_EMAILS: ${{ vars.PATCHWORK_FILTER_EMAILS }}
+  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+
 jobs:
   fetch_patches:
     # This is a dedicated self hosted runner that will always* run this on time
-    runs-on: [self-hosted, ping]
+    runs-on: [self-hosted, linux, x64, rise-gcc-ci, ping]
+    concurrency:
+      group: precommit-patchwork-fetch-${{ github.repository }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: riscv-gnu-toolchain
@@ -75,9 +86,9 @@ jobs:
         if: ${{ inputs.timestamp == '' }}
         run: |
           if [ "${{ github.workflow }}" == "Staging" ] && [ "${{ github.event_name }}" == "schedule" ]; then
-            python scripts/create_timestamp_files.py -token ${{ secrets.GITHUB_TOKEN }} -rid ${{ github.run_id }} -repo ewlu/gcc-precommit-ci -workflow Staging
+            python scripts/create_timestamp_files.py -token ${{ secrets.GITHUB_TOKEN }} -rid ${{ github.run_id }} -repo "${PRECOMMIT_REPOSITORY}" -workflow Staging
           else
-            python scripts/create_timestamp_files.py -token ${{ secrets.GITHUB_TOKEN }} -rid ${{ github.run_id }} -repo ewlu/gcc-precommit-ci -workflow Patchworks
+            python scripts/create_timestamp_files.py -token ${{ secrets.GITHUB_TOKEN }} -rid ${{ github.run_id }} -repo "${PRECOMMIT_REPOSITORY}" -workflow Patchworks
           fi
 
           cat runs.log
@@ -166,6 +177,7 @@ jobs:
     with:
       baseline_hash: ${{ inputs.baseline_gcc_hash }}
       tot_hash: ${{ inputs.tip_of_tree_hash }}
+    secrets: inherit
 
   patch_matrix:
     needs: [fetch_patches, init-submodules]
@@ -175,6 +187,8 @@ jobs:
         patch_name: ${{ fromJSON(needs.fetch_patches.outputs.list_of_patch_names) }}
     uses: ./.github/workflows/run-checks.yaml
     permissions:
+      actions: read
+      contents: read
       issues: write
     with:
       patch_name: ${{ matrix.patch_name }}

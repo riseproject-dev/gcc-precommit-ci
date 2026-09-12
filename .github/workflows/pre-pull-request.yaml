@@ -12,7 +12,7 @@ jobs:
   tests:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,6 +23,14 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install -r requirements.txt --break-system-packages
+
+      - name: Check migration ownership
+        run: |
+          python scripts/check_migration_guards.py
+
+      - name: Test workflow recovery
+        run: |
+          python -m unittest discover -s tests -v
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
