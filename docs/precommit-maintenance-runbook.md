@@ -80,7 +80,7 @@ recovery run therefore needs attention even if some patch issues look complete.
 Patch polling and staging metadata lookup run on `ubuntu-24.04`; they do not
 wait behind self-hosted builds or require a `ping` runner. Long builds require
 `self-hosted`, `linux`, `x64`, and `rise-gcc-ci`, with a registration available to
-this repository. Each build/test job uses 20 parallel workers.
+this repository. Each build/test job uses 32 parallel workers.
 
 Provision dependencies using the maintenance account before starting the
 runner. Self-hosted jobs only verify prerequisites and must not have sudo.

@@ -62,7 +62,7 @@ Polling and staging metadata lookup do not consume a self-hosted build slot.
 GitHub schedules can be delayed; retain the nightly recovery workflow and check
 that polling windows are processed. A separate `ping` runner is no longer needed.
 
-Self-hosted builds use 20 parallel workers. The maintenance account must install
+Self-hosted builds use 32 parallel workers. The maintenance account must install
 toolchain dependencies before the runner starts; jobs verify them with
 `.github/actions/common/setup-dependencies/check-dependencies.sh` and do not use
 sudo. GitHub-hosted builds continue to install their dependencies. The pinned
