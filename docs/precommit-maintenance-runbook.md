@@ -77,11 +77,18 @@ recovery run therefore needs attention even if some patch issues look complete.
 
 ## Runner Safety
 
-Patch polling requires labels `self-hosted`, `linux`, `x64`, `rise-gcc-ci`, and
-`ping`. Long builds require `self-hosted`, `linux`, `x64`, and `rise-gcc-ci`.
-These jobs can use sudo and erase their Actions workspace, so runners must be
-ephemeral or in a dedicated RISE runner group. Do not route pull requests to a
-shared organization runner.
+Patch polling and staging metadata lookup run on `ubuntu-24.04`; they do not
+wait behind self-hosted builds or require a `ping` runner. Long builds require
+`self-hosted`, `linux`, `x64`, and `rise-gcc-ci`, with a registration available to
+this repository. Each build/test job uses 20 parallel workers.
+
+Provision dependencies using the maintenance account before starting the
+runner. Self-hosted jobs only verify prerequisites and must not have sudo.
+They erase their own Actions workspace and execute incoming patch code, so use
+an isolated, disposable execution environment with a separate workspace from
+post-commit. A runner group controls routing; it does not provide execution
+isolation. Keep the polling/reporting credentials out of the patch execution
+environment when deploying the runner.
 
 ## Dependency Updates
 

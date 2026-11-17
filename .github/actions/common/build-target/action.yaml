@@ -30,13 +30,8 @@ outputs:
 runs:
   using: "composite"
   steps:
-      - name: Install dependencies
-        shell: bash
-        working-directory: riscv-gnu-toolchain
-        run: |
-          sudo ./.github/setup-apt.sh
-          sudo apt install python3 -y
-          sudo apt install python-is-python3 -y
+      - name: Prepare toolchain dependencies
+        uses: ./.github/actions/common/setup-dependencies
 
       - name: Configure
         shell: bash
@@ -55,7 +50,7 @@ runs:
         run: |
           cd build
           set -o pipefail
-          (make -j 32  --output-sync=target ${{ inputs.mode }}) 2> >(tee ${{ inputs.build_log_name }}-stderr.log) > >(tee ${{ inputs.build_log_name }}-stdout.log) | tee ${{ inputs.build_log_name }}.log
+          (make -j20 --output-sync=target ${{ inputs.mode }}) 2> >(tee ${{ inputs.build_log_name }}-stderr.log) > >(tee ${{ inputs.build_log_name }}-stdout.log) | tee ${{ inputs.build_log_name }}.log
           set +o pipefail
 
       - name: Upload build log

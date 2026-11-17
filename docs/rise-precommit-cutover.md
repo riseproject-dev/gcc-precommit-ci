@@ -53,13 +53,63 @@ Do not use personal GitHub tokens for any of these secrets.
 
 | Workflow/job | Labels | Purpose | Required software | Scope |
 | --- | --- | --- | --- | --- |
-| `patchworks.yaml/fetch_patches` | `self-hosted`, `linux`, `x64`, `rise-gcc-ci`, `ping` | Dedicated Patchwork polling and patch artifact creation | Python, zip, network access to Patchwork and GitHub | Dedicated RISE runner group |
-| `staging.yaml/get-patch-info` | `self-hosted`, `linux`, `x64`, `rise-gcc-ci`, `ping` | Staging patch lookup for pull requests | Python, zip, GitHub API access | Dedicated RISE runner group |
+| `patchworks.yaml/fetch_patches` | `ubuntu-24.04` | Patchwork polling and patch artifact creation | Python dependencies and zip installed by the workflow | GitHub-hosted |
+| `staging.yaml/get-patch-info` | `ubuntu-24.04` | Staging patch lookup for pull requests | Python dependencies and zip installed by the workflow | GitHub-hosted |
 | `test-regression.yaml/rerun-timeouts` | `self-hosted`, `linux`, `x64`, `rise-gcc-ci` | Long retry builds and tests | GCC build prerequisites, Python, enough disk for toolchain builds | Dedicated RISE runner group |
 | `test-regression.yaml/run-on-self-hosted` | `self-hosted`, `linux`, `x64`, `rise-gcc-ci` | Long production build and tests | GCC build prerequisites, Python, enough disk for toolchain builds | Dedicated RISE runner group |
 
-The code cannot register runners. RISE must register the runner labels above and
+Polling and staging metadata lookup do not consume a self-hosted build slot.
+GitHub schedules can be delayed; retain the nightly recovery workflow and check
+that polling windows are processed. A separate `ping` runner is no longer needed.
+
+Self-hosted builds use 20 parallel workers. The maintenance account must install
+toolchain dependencies before the runner starts; jobs verify them with
+`.github/actions/common/setup-dependencies/check-dependencies.sh` and do not use
+sudo. GitHub-hosted builds continue to install their dependencies. The pinned
+shared toolchain includes the Linux GCC stage2 installation race fix validated
+by post-commit.
+
+Incoming patch builds need an isolated, disposable execution environment. A
+repository-scoped post-commit runner cannot pick up pre-commit jobs merely
+because its labels match. If both services use one physical machine, keep
+registrations and workspaces separate and budget their combined CPU and memory.
+Do not add concurrent build capacity until the host's running jobs and resource
+limits have been checked.
+
+The code cannot register runners. RISE must provide the build runner above and
 complete a workflow before production ownership can be claimed.
+
+## Isolated Pilot on One Host
+
+`ops/precommit-runner/Containerfile` builds an unprivileged runner image with
+preinstalled dependencies and a checksum-pinned GitHub runner. Build it with
+the repository root as context. The maintenance account installs rootless
+Podman and creates `rise-precommit-ci`, separate from the post-commit account.
+On 07, the pre-commit user slice is limited to 20 CPUs and 80 GiB; the container
+uses at most 76 GiB. Post-commit retains its 20 CPU / 96 GiB limits.
+
+The supplied `rise-precommit-pilot.service` is a **user** service. It starts one
+container with its own disposable workspace, a separate network namespace,
+no added capabilities, no sudo, and no host engine socket. Only the diagnostic
+log directory is mounted from the host. Retain those logs after each job.
+Update the image tag in the unit when rebuilding the image.
+
+An operator creates a repository-scoped JIT configuration through the GitHub
+runner API and supplies the encoded configuration as a Podman secret named
+`runner-jit-config`. Its container UID/GID is 1001 and mode is 0400. Never put a
+PAT, GitHub App private key, or registration API credential in the image or
+job environment. The pilot uses only the `rise-precommit-pilot-07` custom label
+until the workflow revision and credentials have been validated.
+
+Start the unit only after creating a fresh JIT configuration. It does not
+restart or start at boot: each configuration accepts one job, and a new
+configuration/container is required for the next job. The container is removed
+on exit. This is pilot provisioning, not an automatic queue controller.
+
+This container separates pre-commit from post-commit and later jobs. It does
+not isolate individual steps within a job. Before enabling unattended patch
+processing, review credentials exposed to build/report steps and keep privileged
+reporting credentials in separate trusted jobs.
 
 ## Bootstrap
 
@@ -75,7 +125,8 @@ complete a workflow before production ownership can be claimed.
 
 ## Cutover
 
-1. Confirm the dedicated `ping` runner and build runners are online under RISE.
+1. Confirm hosted polling succeeds and an isolated build runner is online for
+   the pre-commit repository.
 2. Confirm `PATCHWORK_API`, `RISE_CI_READ_TOKEN`, and `GIST_TOKEN` are RISE
    service-account credentials.
 3. Confirm generated issues link to `riseproject-dev/gcc-precommit-ci` and
