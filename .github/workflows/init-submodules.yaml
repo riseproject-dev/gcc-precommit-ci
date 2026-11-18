@@ -75,9 +75,14 @@ jobs:
       - name: Synchronize submodule URLs
         run: git submodule sync --recursive
 
-      - name: Initalize submodules cache
+      - name: Initialize submodules cache
         id: cache-init
         if: steps.retrieve-cache.outputs.cache-hit != 'true'
+        env:
+          # Savannah timed out from hosted runners. Fetch the pinned DejaGnu commit from its mirror.
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: url.https://gnu.googlesource.com/dejagnu.insteadOf
+          GIT_CONFIG_VALUE_0: https://git.savannah.gnu.org/git/dejagnu.git
         run: |
           bash scripts/update_ci_submodules.sh binutils dejagnu gdb glibc newlib qemu
 
