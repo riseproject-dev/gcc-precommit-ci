@@ -1,0 +1,39 @@
+FROM docker.io/library/ubuntu:24.04
+
+ARG RUNNER_VERSION=2.338.2
+ARG RUNNER_SHA256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git gh openssh-client file \
+    python3 python-is-python3 python3-pip python3-venv python3-pyelftools \
+    build-essential autoconf automake autotools-dev bison flex gawk gperf \
+    libtool patchutils bc texinfo cmake ninja-build pkg-config \
+    libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev libexpat1-dev \
+    libglib2.0-dev libpixman-1-dev expect tcl-dev device-tree-compiler \
+    zip unzip tar libicu74 libssl3t64 libkrb5-3 liblttng-ust1t64 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/precommit-requirements.txt
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+    -r /tmp/precommit-requirements.txt && rm /tmp/precommit-requirements.txt
+
+RUN useradd --uid 1001 --create-home --shell /bin/bash runner \
+    && mkdir -p /opt/actions-runner /srv/work \
+    && curl --fail --location --retry 3 \
+       "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+       -o /tmp/runner.tar.gz \
+    && echo "${RUNNER_SHA256}  /tmp/runner.tar.gz" | sha256sum --check \
+    && tar -xzf /tmp/runner.tar.gz -C /opt/actions-runner \
+    && rm /tmp/runner.tar.gz \
+    && chown -R runner:runner /opt/actions-runner /srv/work
+
+COPY .github/actions/common/setup-dependencies/check-dependencies.sh /usr/local/bin/check-precommit-dependencies
+COPY ops/precommit-runner/entrypoint.sh /usr/local/bin/run-precommit-runner
+RUN chmod 0755 /usr/local/bin/check-precommit-dependencies /usr/local/bin/run-precommit-runner
+
+USER runner
+ENV HOME=/home/runner
+WORKDIR /opt/actions-runner
+RUN check-precommit-dependencies && ./bin/Runner.Listener --version
+ENTRYPOINT ["/usr/local/bin/run-precommit-runner"]

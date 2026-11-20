@@ -47,13 +47,12 @@ permissions:
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_CHECK_USERNAME: ${{ vars.PATCHWORK_CHECK_USERNAME }}
-  PATCHWORK_FILTER_EMAILS: ${{ vars.PATCHWORK_FILTER_EMAILS }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
 
 jobs:
   fetch_patches:
-    # This is a dedicated self hosted runner that will always* run this on time
-    runs-on: [self-hosted, linux, x64, rise-gcc-ci, ping]
+    # Keep polling independent of long-running self-hosted builds.
+    runs-on: ubuntu-24.04
     concurrency:
       group: precommit-patchwork-fetch-${{ github.repository }}
       cancel-in-progress: false
@@ -61,14 +60,6 @@ jobs:
       run:
         working-directory: riscv-gnu-toolchain
     steps:
-      - name: Cleanup build folder
-        working-directory: ./
-        run: |
-          ls -la ./
-          rm -rf ./* || true
-          rm -rf ./.??* || true
-          ls -la ./
-
       - uses: actions/checkout@v4
 
       - name: Setup env
@@ -76,11 +67,17 @@ jobs:
         with:
           free_up_space: false
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r ../requirements.txt
+
       - name: Install dependencies
-        run: |
-          sudo apt install python3 -y
-          sudo apt install python-is-python3 -y
-          sudo apt install zip -y
+        run: sudo apt install zip -y
 
       - name: Get timestamps and make directories
         if: ${{ inputs.timestamp == '' }}
@@ -99,48 +96,30 @@ jobs:
 
       - name: Update times for workflow dispatch
         if: ${{ inputs.timestamp != '' }}
+        env:
+          PATCH_TIMESTAMP: ${{ inputs.timestamp }}
         run: |
           # only use date to convert timestamp to isoformatted time.
-          python scripts/create_timestamp_files.py -timestamp $(date -d "${{ inputs.timestamp }}" '+%Y-%m-%dT%H:%M:%S')
+          timestamp=$(date -d "$PATCH_TIMESTAMP" '+%Y-%m-%dT%H:%M:%S')
+          python scripts/create_timestamp_files.py -timestamp "$timestamp"
 
           cat prior_run_time_minus_15_min_rounded.txt
           cat prior_run_time_rounded.txt
           cat current_time_rounded.txt
 
       - name: Get list of new patches
+        env:
+          PATCH_ID: ${{ inputs.patch_id }}
         run: |
           mkdir -p patch_urls
           mkdir -p patchworks_metadata
-          if [ "${{ inputs.patch_id }}" == "" ]; then
+          if [ -z "$PATCH_ID" ]; then
             python scripts/create_patches_files.py -backup $(cat prior_run_time_minus_15_min_rounded.txt) -start $(cat prior_run_time_rounded.txt) -end $(cat current_time_rounded.txt)
+          elif [[ "$PATCH_ID" =~ ^[0-9]+$ ]]; then
+            python scripts/create_patches_files.py -patch "$PATCH_ID"
           else
-            python scripts/create_patches_files.py -patch ${{ inputs.patch_id }}
-          fi
-          if [ "${{ github.workflow }}" == "Staging" ] && [ "${{ github.event_name }}" == "schedule" ]; then
-            echo "Running non riscv patches"
-            # save riscv patches
-            mv patch_urls riscv_patch_urls
-            mv patchworks_metadata riscv_patchworks_metadata
-            mv artifact_names.txt riscv_artifact_names.txt
-            echo "saved riscv patches"
-            ls riscv_patch_urls
-            # setup again to get all patches so we can get the difference and avoid double work
-            mkdir -p patch_urls
-            mkdir -p patchworks_metadata
-            python scripts/create_patches_files.py -backup $(cat prior_run_time_minus_15_min_rounded.txt) -start $(cat prior_run_time_rounded.txt) -end $(cat current_time_rounded.txt) -all-patches
-            echo "all found patches"
-            ls patch_urls
-            # if there are riscv patches in this batch, remove them. otherwise leave as is
-            if [ "$(ls riscv_patch_urls)" ]; then
-              # perform the difference
-              for file in riscv_patch_urls/*; do
-                base=$(basename $file)
-                echo "removing $base from all found patches"
-                rm -rf patch_urls/$base patchworks_metadata/$base
-                cat artifact_names.txt | sed "s/\s*'$base'\s*//g" | sed "s/,,/,/g" | sed "s/,\]/\]/g" | sed "s/\[,/\[/g"> temp.txt
-                mv temp.txt artifact_names.txt
-              done
-            fi
+            echo "::error::Expected a numeric Patchwork patch ID."
+            exit 1
           fi
 
       - name: List patch artifacts

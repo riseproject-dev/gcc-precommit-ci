@@ -21,8 +21,11 @@ Review the most recent `Patchworks` workflow on every on-call pass:
    `valid-baseline`, and that all result links point to
    `riseproject-dev/gcc-precommit-ci`.
 
-Use `PATCHWORK_FILTER_EMAILS` only for intentional additional mailbox matching;
-normal RISC-V matching is based on `riscv`/`risc-v` text in the mbox.
+Queue a GCC Patchwork patch when its own subject identifies RISC-V or its diff
+changes a RISC-V target path. Polling, staging, manual patch IDs and downtime
+recovery apply the same rule. A generic patch earlier in the same series may
+be applied as a prerequisite. Only qualifying patches receive their own build
+and Patchwork checks. Out-of-scope IDs produce an empty build queue.
 
 ## Shadow And Production Modes
 
@@ -77,18 +80,26 @@ recovery run therefore needs attention even if some patch issues look complete.
 
 ## Runner Safety
 
-Patch polling requires labels `self-hosted`, `linux`, `x64`, `rise-gcc-ci`, and
-`ping`. Long builds require `self-hosted`, `linux`, `x64`, and `rise-gcc-ci`.
-These jobs can use sudo and erase their Actions workspace, so runners must be
-ephemeral or in a dedicated RISE runner group. Do not route pull requests to a
-shared organization runner.
+Patch polling and staging metadata lookup run on `ubuntu-24.04`; they do not
+wait behind self-hosted builds or require a `ping` runner. Long builds require
+`self-hosted`, `linux`, `x64`, and `rise-gcc-ci`, with a registration available to
+this repository. Each build/test job uses 32 parallel workers.
+
+Provision dependencies using the maintenance account before starting the
+runner. Self-hosted jobs only verify prerequisites and must not have sudo.
+They erase their own Actions workspace and execute incoming patch code, so use
+an isolated, disposable execution environment with a separate workspace from
+post-commit. A runner group controls routing; it does not provide execution
+isolation. Keep the polling/reporting credentials out of the patch execution
+environment when deploying the runner.
 
 ## Dependency Updates
 
-Publish toolchain changes first, then post-commit, wait for a new valid
-post-commit baseline, and only then update the pre-commit gitlink. When source
-submodules change, bump every `submodules-archive-` restore/save key in both CI
-repositories as applicable.
+Merge shared toolchain changes first. For changes confined to pre-commit patch
+selection, update the pre-commit gitlink to the published toolchain revision.
+For changes that affect baseline comparability, update post-commit and wait for
+a new valid baseline before updating pre-commit. When source submodules change,
+bump the corresponding `submodules-archive-` restore/save keys.
 
 ## Incident Stop Controls
 
