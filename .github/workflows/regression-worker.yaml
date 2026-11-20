@@ -1,0 +1,369 @@
+name: Build and test patch
+
+on:
+  workflow_call:
+    inputs:
+      patch_name:
+        required: true
+        type: string
+      patch_id:
+        required: true
+        type: string
+      mode:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+      baseline_hash:
+        required: true
+        type: string
+      patch_applied_gcchash:
+        required: true
+        type: string
+      multilib:
+        required: true
+        type: string
+      build_only:
+        required: true
+        type: string
+      run_on_self_hosted:
+        required: true
+        type: boolean
+      tot_hash:
+        required: true
+        type: string
+    outputs:
+      build_status:
+        description: "Outcome of the build step, including setup and artifact upload"
+        value: ${{ inputs.run_on_self_hosted && jobs.run-on-self-hosted.outputs.build_status || jobs.build.outputs.build_status }}
+      test_status:
+        description: "Outcome of the requested testsuite or its timeout retry"
+        value: ${{ (inputs.run_on_self_hosted && jobs.run-on-self-hosted.outputs.test_status == 'success' || !inputs.run_on_self_hosted && (jobs.test.outputs.test_status == 'success' || jobs.rerun-timeouts.outputs.test_status == 'success')) && 'success' || 'failure' }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    if: ${{ !inputs.run_on_self_hosted }}
+    defaults:
+      run:
+        working-directory: riscv-gnu-toolchain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup env
+        uses: ./.github/actions/common/setup-env
+        with:
+          free_up_space: true
+
+      - name: Restore submodules from cache
+        run: |
+          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Restore submodules
+        run: |
+          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
+          unzip cache.zip
+          rm -rf cache.zip
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r ../requirements.txt --break-system-packages
+
+      - name: Extract and apply patches
+        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
+        with:
+          patch_name: ${{ inputs.patch_name }}
+          baseline_hash: ${{ inputs.baseline_hash }}
+          build_only: ${{ inputs.build_only }}
+          tot_hash: ${{ inputs.tot_hash }}
+
+      - name: Build gcc
+        id: build-status
+        uses: ./.github/actions/common/build-target
+        with:
+          multilib_target_string: ${{ inputs.target }}
+          build_log_name: ${{ inputs.patch_id }}-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}-build-log
+          upload_stage2_artifacts: 'true'
+          mode: ${{ inputs.mode }}
+          target: ${{ inputs.target }}
+          gcchash: ${{ inputs.patch_applied_gcchash }}
+          multilib: ${{ inputs.multilib }}
+
+    outputs:
+      build_status: ${{ steps.build-status.outcome }}
+
+  test:
+    runs-on: ubuntu-24.04
+    needs: [build]
+    # Skip linux multilib
+    if: ${{ inputs.build_only == 'false' && !inputs.run_on_self_hosted }}
+    defaults:
+      run:
+        working-directory: riscv-gnu-toolchain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Everything is moved onto self-hosted runners except for rv64gc build only
+      - name: Error if enter
+        run: |
+          exit 1
+
+      - name: Setup env
+        uses: ./.github/actions/common/setup-env
+        with:
+          free_up_space: true
+
+      - name: Restore submodules from cache
+        run: |
+          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Restore submodules
+        run: |
+          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
+          unzip cache.zip
+          rm -rf cache.zip
+
+      - name: Extract and apply patches
+        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
+        with:
+          patch_name: ${{ inputs.patch_name }}
+          baseline_hash: ${{ inputs.baseline_hash }}
+          build_only: ${{ inputs.build_only }}
+          tot_hash: ${{ inputs.tot_hash }}
+
+      - name: Prepare toolchain dependencies
+        uses: ./.github/actions/common/setup-dependencies
+
+      # There is only one github target now which is rv64gc build only
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          TARGET_TUPLE=($(echo ${{ inputs.target }} | tr "-" "\n"))
+          ../../configure-scripts/${TARGET_TUPLE[0]}-${TARGET_TUPLE[1]}
+          sed -i "s/ --user / --user --break-system-packages /g" Makefile
+
+      - name: Restore Stage2 Artifacts
+        uses: ./.github/actions/common/restore-stage-2
+        with:
+          mode: ${{ inputs.mode }}
+          target: ${{ inputs.target }}
+          gcchash: ${{ inputs.patch_applied_gcchash }}
+          multilib: ${{ inputs.multilib }}
+
+      - name: Replace allowlist
+        run: |
+          rm -rf test/
+          cp -r ../test/ .
+
+      - name: Run Testsuite
+        id: testsuite
+        uses: ./.github/actions/common/run-testsuite
+        with:
+          mode: ${{ inputs.mode }}
+          target: ${{ inputs.target }}
+          gcchash: ${{ inputs.patch_applied_gcchash }}
+          multilib: ${{ inputs.multilib }}
+
+    outputs:
+      test_status: ${{ steps.testsuite.outcome }}
+
+  # The self-hosted environment does not have the same path setup as the hosted runners
+  # We need to rebuild since restoring the artifact won't work
+  # (the new path will break the existing build).
+  rerun-timeouts:
+    runs-on: [self-hosted, linux, x64, rise-precommit-regression-07]
+    needs: [build, test]
+    if: ${{ failure() && needs.build.outputs.build_status == 'success' && !inputs.run_on_self_hosted }}
+    timeout-minutes: 1440 # 24 hours
+    defaults:
+      run:
+        working-directory: riscv-gnu-toolchain
+    steps:
+      - name: Cleanup build folder
+        working-directory: ./
+        run: |
+          ls -la ./
+          rm -rf ./* || true
+          rm -rf ./.??* || true
+          ls -la ./
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup env
+        uses: ./.github/actions/common/setup-env
+        with:
+          free_up_space: false
+
+      - name: Restore submodules from cache
+        run: |
+          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Restore submodules
+        run: |
+          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
+          unzip cache.zip
+          rm -rf cache.zip
+
+      - name: Install Python dependencies
+        run: python -m pip install -r ../requirements.txt --break-system-packages
+
+      - name: Extract and apply patches
+        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
+        with:
+          patch_name: ${{ inputs.patch_name }}
+          baseline_hash: ${{ inputs.baseline_hash }}
+          build_only: ${{ inputs.build_only }}
+          tot_hash: ${{ inputs.tot_hash }}
+
+      - name: Prepare toolchain dependencies
+        uses: ./.github/actions/common/setup-dependencies
+
+      # There is only one github target now which is rv64gc build only
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          TARGET_TUPLE=($(echo ${{ inputs.target }} | tr "-" "\n"))
+          ../../configure-scripts/${TARGET_TUPLE[0]}-${TARGET_TUPLE[1]}
+          sed -i "s/ --user / --user --break-system-packages /g" Makefile
+
+      - name: Build
+        run: |
+          cd build
+          make ${{ inputs.mode }} -j32
+
+      - name: Replace allowlist
+        run: |
+          rm -rf test/
+          cp -r ../test/ .
+
+      - name: Run Testsuite
+        id: testsuite
+        if: ${{ inputs.build_only == 'false' }}
+        uses: ./.github/actions/common/run-testsuite
+        with:
+          mode: ${{ inputs.mode }}
+          target: ${{ inputs.target }}
+          gcchash: ${{ inputs.patch_applied_gcchash }}
+          multilib: ${{ inputs.multilib }}
+
+    outputs:
+      test_status: ${{ steps.testsuite.outcome }}
+
+  # The self-hosted environment does not have the same path setup as the hosted runners
+  # We need to rebuild since restoring the artifact won't work
+  # (the new path will break the existing build).
+  run-on-self-hosted:
+    runs-on: [self-hosted, linux, x64, rise-precommit-regression-07]
+    if: ${{ inputs.run_on_self_hosted }}
+    timeout-minutes: 1440 # 24 hours
+    defaults:
+      run:
+        working-directory: riscv-gnu-toolchain
+    steps:
+      - name: Cleanup build folder
+        working-directory: ./
+        run: |
+          ls -la ./
+          rm -rf ./* || true
+          rm -rf ./.??* || true
+          ls -la ./
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup env
+        uses: ./.github/actions/common/setup-env
+        with:
+          free_up_space: false
+
+      - name: Restore submodules from cache
+        run: |
+          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Restore submodules
+        run: |
+          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
+          unzip cache.zip
+          rm -rf cache.zip
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r ../requirements.txt --break-system-packages
+
+      - name: Extract and apply patches
+        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
+        with:
+          patch_name: ${{ inputs.patch_name }}
+          baseline_hash: ${{ inputs.baseline_hash }}
+          build_only: ${{ inputs.build_only }}
+          tot_hash: ${{ inputs.tot_hash }}
+
+      - name: Get target string
+        id: target-string
+        run: |
+          if [ '${{ inputs.mode }}' == 'newlib' ] && [ '${{ inputs.target }}' == 'rv64gcv-lp64d' ];
+          then
+            echo "target_string=rv64gcv-lp64d-reduced-multilib-set" >> $GITHUB_OUTPUT
+          else
+            echo "target_string=${{ inputs.target }}" >> $GITHUB_OUTPUT
+          fi
+
+      # Don't upload stage 2 artifacts on self-hosted runners
+      # in interest of resources
+      - name: Build gcc
+        id: build-gcc-status
+        uses: ./.github/actions/common/build-target
+        with:
+          multilib_target_string: ${{ steps.target-string.outputs.target_string }}
+          build_log_name: ${{ inputs.patch_id }}-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}-build-log
+          upload_stage2_artifacts: 'false'
+          mode: ${{ inputs.mode }}
+          target: ${{ inputs.target }}
+          gcchash: ${{ inputs.patch_applied_gcchash }}
+          multilib: ${{ inputs.multilib }}
+
+      - name: Replace allowlist
+        run: |
+          rm -rf test/
+          cp -r ../test/ .
+
+      - name: Run Testsuite
+        id: testsuite
+        if: ${{ inputs.build_only == 'false' }}
+        uses: ./.github/actions/common/run-testsuite
+        with:
+          mode: ${{ inputs.mode }}
+          target: ${{ inputs.target }}
+          gcchash: ${{ inputs.patch_applied_gcchash }}
+          multilib: ${{ inputs.multilib }}
+
+    outputs:
+      build_status: ${{ steps.build-gcc-status.outcome }}
+      test_status: ${{ steps.testsuite.outcome }}

@@ -2,8 +2,16 @@ name: Test-Regression
 
 on:
   workflow_call:
+    secrets:
+      PATCHWORK_API:
+        required: false
+      GIST_TOKEN:
+        required: false
     inputs:
       patch_name:
+        required: true
+        type: string
+      patch_id:
         required: true
         type: string
       mode:
@@ -46,435 +54,115 @@ on:
 permissions:
   actions: read
   contents: read
-  issues: write
 
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
 
 jobs:
-  build:
+  report-queued:
     runs-on: ubuntu-24.04
     environment: production
-    if: ${{ !inputs.run_on_self_hosted }}
-    defaults:
-      run:
-        working-directory: riscv-gnu-toolchain
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup env
-        uses: ./.github/actions/common/setup-env
         with:
-          free_up_space: true
+          submodules: true
+          persist-credentials: false
 
-      - name: Restore submodules from cache
-        run: |
-          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
+      - name: Validate the Patchwork target
         env:
-          GH_TOKEN: ${{ github.token }}
+          PATCH_ID: ${{ inputs.patch_id }}
+        run: '[[ "$PATCH_ID" =~ ^[0-9]+$ ]]'
 
-      - name: Restore submodules
-        run: |
-          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
-          unzip cache.zip
-          rm -rf cache.zip
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
-      - name: Install Python dependencies
+      - run: python -m pip install --no-cache-dir -r requirements.txt
+
+      - name: Mark build queued
+        working-directory: riscv-gnu-toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ inputs.build_comment_id }}
+          TARGET: ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}
+          GCC_HASH: ${{ inputs.build_only == 'true' && inputs.tot_hash || inputs.baseline_hash }}
+          INFO_URL: ${{ inputs.additional_info }}
         run: |
-          pip install -r ../requirements.txt --break-system-packages
+          python scripts/update_issue_status.py -token "$GH_TOKEN" -state 'Queued' -comment "$COMMENT_ID" -target "$TARGET" -check 'Build GCC' -repo "$GITHUB_REPOSITORY" -baseline "$GCC_HASH"
+          printf '\n[Additional information](%s)\n' "$INFO_URL" >> comment.md
 
-      - name: Extract and apply patches
-        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
-        with:
-          patch_name: ${{ inputs.patch_name }}
-          baseline_hash: ${{ inputs.baseline_hash }}
-          build_only: ${{ inputs.build_only }}
-          tot_hash: ${{ inputs.tot_hash }}
-
-      - name: Build pending comment
-        run: |
-          if [ '${{ inputs.build_only }}' == 'true' ]; then
-            python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Pending' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Build GCC' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.tot_hash }}
-          else
-            python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Pending' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Build GCC' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.baseline_hash }}
-          fi
-          printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
-
-      - name: Update build pending report comment
-        uses: ./.github/actions/update-comment
+      - uses: ./.github/actions/update-comment
         with:
           comment_id: ${{ inputs.build_comment_id }}
           file_path: riscv-gnu-toolchain/comment.md
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ github.token }}
 
-      - name: Report build
+      - name: Report queued Patchwork checks
         if: ${{ github.workflow != 'Staging' }}
+        working-directory: riscv-gnu-toolchain
+        env:
+          PATCHWORK_TOKEN: ${{ secrets.PATCHWORK_API }}
+          PATCH_ID: ${{ inputs.patch_id }}
+          TARGET: ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}
+          BUILD_ISSUE: ${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}
+          TEST_ISSUE: ${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}
+          BUILD_ONLY: ${{ inputs.build_only }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'pending' -context 'build--${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event "$GITHUB_EVENT_NAME" -repo "$GITHUB_REPOSITORY" -pid "$PATCH_ID" -desc 'Build queued' -iid "$BUILD_ISSUE" -state pending -context "build--$TARGET" -token "$PATCHWORK_TOKEN"
+          if [[ "$BUILD_ONLY" == false ]]; then
+            python scripts/post_check_to_patchworks.py -event "$GITHUB_EVENT_NAME" -repo "$GITHUB_REPOSITORY" -pid "$PATCH_ID" -desc 'Testsuite queued' -iid "$TEST_ISSUE" -state pending -context test -token "$PATCHWORK_TOKEN"
+          fi
 
-      - name: Make log name
-        id: build-log
-        run: |
-          export BUILD_LOG_NAME=$(tail -n 1 patches/${{ inputs.patch_name }})-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}-build-log
-          echo "build_log_name=$BUILD_LOG_NAME" >> $GITHUB_OUTPUT
+  execute:
+    needs: [report-queued]
+    uses: ./.github/workflows/regression-worker.yaml
+    permissions:
+      actions: read
+      contents: read
+    with:
+      patch_name: ${{ inputs.patch_name }}
+      patch_id: ${{ inputs.patch_id }}
+      mode: ${{ inputs.mode }}
+      target: ${{ inputs.target }}
+      baseline_hash: ${{ inputs.baseline_hash }}
+      patch_applied_gcchash: ${{ inputs.patch_applied_gcchash }}
+      multilib: ${{ inputs.multilib }}
+      build_only: ${{ inputs.build_only }}
+      run_on_self_hosted: ${{ inputs.run_on_self_hosted }}
+      tot_hash: ${{ inputs.tot_hash }}
 
-      - name: Build gcc
-        id: build-status
-        uses: ./.github/actions/common/build-target
-        with:
-          multilib_target_string: ${{ inputs.target }}
-          build_log_name: ${{ steps.build-log.outputs.build_log_name }}
-          upload_stage2_artifacts: 'true'
-          mode: ${{ inputs.mode }}
-          target: ${{ inputs.target }}
-          gcchash: ${{ inputs.patch_applied_gcchash }}
-          multilib: ${{ inputs.multilib }}
-
-      - name: Report build completion status
-        if: ${{ always() }}
-        uses: ./.github/actions/report-build-complete-status
-        with:
-          build_status: ${{ steps.build-status.outputs.build_status }}
-          patch_name: ${{ inputs.patch_name }}
-          build_log_name: ${{ steps.build-log.outputs.build_log_name }}
-          target: ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}
-          baseline_hash: ${{ inputs.baseline_hash }}
-          tot_hash: ${{ inputs.tot_hash }}
-          build_only: ${{ inputs.build_only }}
-          issue_num: ${{ inputs.issue_num }}
-          build_comment_id: ${{ inputs.build_comment_id }}
-          additional_info: ${{ inputs.additional_info }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          gist_token: ${{ secrets.GIST_TOKEN }}
-          patchwork_token: ${{ secrets.PATCHWORK_API }}
-          repository: ${{ env.PRECOMMIT_REPOSITORY }}
-
-    outputs:
-      build_status: ${{ steps.build-status.outputs.build_status }}
-
-  test:
+  report-complete:
+    needs: [report-queued, execute]
+    if: ${{ !cancelled() && needs.report-queued.result == 'success' }}
     runs-on: ubuntu-24.04
     environment: production
-    needs: [build]
-    # Skip linux multilib
-    if: ${{ inputs.build_only == 'false' && !inputs.run_on_self_hosted }}
-    defaults:
-      run:
-        working-directory: riscv-gnu-toolchain
+    permissions:
+      actions: read
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
-
-      # Everything is moved onto self-hosted runners except for rv64gc build only
-      - name: Error if enter
-        run: |
-          exit 1
-
-      - name: Setup env
-        uses: ./.github/actions/common/setup-env
         with:
-          free_up_space: true
+          submodules: true
+          persist-credentials: false
 
-      - name: Restore submodules from cache
-        run: |
-          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Restore submodules
-        run: |
-          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
-          unzip cache.zip
-          rm -rf cache.zip
-
-      - name: Extract and apply patches
-        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
+      - uses: actions/setup-python@v5
         with:
-          patch_name: ${{ inputs.patch_name }}
-          baseline_hash: ${{ inputs.baseline_hash }}
-          build_only: ${{ inputs.build_only }}
-          tot_hash: ${{ inputs.tot_hash }}
+          python-version: "3.11"
 
-      - name: Build test pending report
-        run: |
-          python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Pending' -comment ${{ inputs.test_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Testsuite' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.baseline_hash }}
-          printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
-
-      - name: Update test pending report comment
-        uses: ./.github/actions/update-comment
-        with:
-          comment_id: ${{ inputs.test_comment_id }}
-          file_path: riscv-gnu-toolchain/comment.md
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Report testing
-        if: ${{ github.workflow != 'Staging' }}
-        run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'pending' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
-
-      - name: Prepare toolchain dependencies
-        uses: ./.github/actions/common/setup-dependencies
-
-      # There is only one github target now which is rv64gc build only
-      - name: Configure
-        run: |
-          mkdir build
-          cd build
-          TARGET_TUPLE=($(echo ${{ inputs.target }} | tr "-" "\n"))
-          ../../configure-scripts/${TARGET_TUPLE[0]}-${TARGET_TUPLE[1]}
-          sed -i "s/ --user / --user --break-system-packages /g" Makefile
-
-      - name: Restore Stage2 Artifacts
-        uses: ./.github/actions/common/restore-stage-2
-        with:
-          mode: ${{ inputs.mode }}
-          target: ${{ inputs.target }}
-          gcchash: ${{ inputs.patch_applied_gcchash }}
-          multilib: ${{ inputs.multilib }}
-
-      - name: Replace allowlist
-        run: |
-          rm -rf test/
-          cp -r ../test/ .
-
-      - name: Run Testsuite
-        uses: ./.github/actions/common/run-testsuite
-        with:
-          mode: ${{ inputs.mode }}
-          target: ${{ inputs.target }}
-          gcchash: ${{ inputs.patch_applied_gcchash }}
-          multilib: ${{ inputs.multilib }}
-
-      - name: Build test complete report
-        run: |
-          python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Complete. Full report will be displayed once all targets are complete' -comment ${{ inputs.test_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Testsuite' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.baseline_hash }}
-          printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
-
-      - name: Update test complete report comment
-        uses: ./.github/actions/update-comment
-        with:
-          comment_id: ${{ inputs.test_comment_id }}
-          file_path: riscv-gnu-toolchain/comment.md
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  # The self-hosted environment does not have the same path setup as the hosted runners
-  # We need to rebuild since restoring the artifact won't work
-  # (the new path will break the existing build).
-  rerun-timeouts:
-    runs-on: [self-hosted, linux, x64, rise-gcc-ci]
-    environment: production
-    needs: [build, test]
-    if: ${{ failure() && needs.build.outputs.build_status == 'success' && !inputs.run_on_self_hosted }}
-    timeout-minutes: 1440 # 24 hours
-    defaults:
-      run:
-        working-directory: riscv-gnu-toolchain
-    steps:
-      - name: Cleanup build folder
-        working-directory: ./
-        run: |
-          ls -la ./
-          rm -rf ./* || true
-          rm -rf ./.??* || true
-          ls -la ./
-
-      - uses: actions/checkout@v4
-
-      - name: Setup env
-        uses: ./.github/actions/common/setup-env
-        with:
-          free_up_space: false
-
-      - name: Restore submodules from cache
-        run: |
-          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Restore submodules
-        run: |
-          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
-          unzip cache.zip
-          rm -rf cache.zip
-
-      - name: Install Python dependencies
-        run: python -m pip install -r ../requirements.txt --break-system-packages
-
-      - name: Extract and apply patches
-        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
-        with:
-          patch_name: ${{ inputs.patch_name }}
-          baseline_hash: ${{ inputs.baseline_hash }}
-          build_only: ${{ inputs.build_only }}
-          tot_hash: ${{ inputs.tot_hash }}
-
-      - name: Prepare toolchain dependencies
-        uses: ./.github/actions/common/setup-dependencies
-
-      # There is only one github target now which is rv64gc build only
-      - name: Configure
-        run: |
-          mkdir build
-          cd build
-          TARGET_TUPLE=($(echo ${{ inputs.target }} | tr "-" "\n"))
-          ../../configure-scripts/${TARGET_TUPLE[0]}-${TARGET_TUPLE[1]}
-          sed -i "s/ --user / --user --break-system-packages /g" Makefile
-
-      - name: Build
-        run: |
-          cd build
-          make ${{ inputs.mode }} -j32
-
-      - name: Replace allowlist
-        run: |
-          rm -rf test/
-          cp -r ../test/ .
-
-      - name: Run Testsuite
-        if: ${{ inputs.build_only == 'false' }}
-        uses: ./.github/actions/common/run-testsuite
-        with:
-          mode: ${{ inputs.mode }}
-          target: ${{ inputs.target }}
-          gcchash: ${{ inputs.patch_applied_gcchash }}
-          multilib: ${{ inputs.multilib }}
-
-      - name: Build test complete report
-        if: ${{ inputs.build_only == 'false' }}
-        run: |
-          python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Complete. Full report will be displayed once all targets are complete' -comment ${{ inputs.test_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Testsuite' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.baseline_hash }}
-          printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
-
-      - name: Update test complete report comment
-        if: ${{ inputs.build_only == 'false' }}
-        uses: ./.github/actions/update-comment
-        with:
-          comment_id: ${{ inputs.test_comment_id }}
-          file_path: riscv-gnu-toolchain/comment.md
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  # The self-hosted environment does not have the same path setup as the hosted runners
-  # We need to rebuild since restoring the artifact won't work
-  # (the new path will break the existing build).
-  run-on-self-hosted:
-    runs-on: [self-hosted, linux, x64, rise-gcc-ci]
-    environment: production
-    if: ${{ inputs.run_on_self_hosted }}
-    timeout-minutes: 1440 # 24 hours
-    defaults:
-      run:
-        working-directory: riscv-gnu-toolchain
-    steps:
-      - name: Cleanup build folder
-        working-directory: ./
-        run: |
-          ls -la ./
-          rm -rf ./* || true
-          rm -rf ./.??* || true
-          ls -la ./
-
-      - uses: actions/checkout@v4
-
-      - name: Setup env
-        uses: ./.github/actions/common/setup-env
-        with:
-          free_up_space: false
-
-      - name: Restore submodules from cache
-        run: |
-          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Restore submodules
-        run: |
-          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
-          unzip cache.zip
-          rm -rf cache.zip
-
-      - name: Install Python dependencies
-        run: |
-          pip install -r ../requirements.txt --break-system-packages
-
-      - name: Extract and apply patches
-        uses: ./.github/actions/extract-apply-patches-trunk-or-baseline
-        with:
-          patch_name: ${{ inputs.patch_name }}
-          baseline_hash: ${{ inputs.baseline_hash }}
-          build_only: ${{ inputs.build_only }}
-          tot_hash: ${{ inputs.tot_hash }}
-
-      - name: Update build pending issue
-        run: |
-          if [ '${{ inputs.build_only }}' == 'true' ]; then
-            python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Pending' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Build GCC' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.tot_hash }}
-          else
-            python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Pending' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Build GCC' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.baseline_hash }}
-          fi
-          printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
-
-      - name: Update build pending report comment
-        uses: ./.github/actions/update-comment
-        with:
-          comment_id: ${{ inputs.build_comment_id }}
-          file_path: riscv-gnu-toolchain/comment.md
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Report build
-        if: ${{ github.workflow != 'Staging' }}
-        run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'pending' -context 'build--${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}' -token '${{ secrets.PATCHWORK_API }}'
-
-      - name: Make log name
-        id: build-log
-        run: |
-          export BUILD_LOG_NAME=$(tail -n 1 patches/${{ inputs.patch_name }})-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}-build-log
-          echo "build_log_name=$BUILD_LOG_NAME" >> $GITHUB_OUTPUT
-
-      - name: Get target string
-        id: target-string
-        run: |
-          if [ '${{ inputs.mode }}' == 'newlib' ] && [ '${{ inputs.target }}' == 'rv64gcv-lp64d' ];
-          then
-            echo "target_string=rv64gcv-lp64d-reduced-multilib-set" >> $GITHUB_OUTPUT
-          else
-            echo "target_string=${{ inputs.target }}" >> $GITHUB_OUTPUT
-          fi
-
-      # Don't upload stage 2 artifacts on self-hosted runners
-      # in interest of resources
-      - name: Build gcc
-        id: build-gcc-status
-        uses: ./.github/actions/common/build-target
-        with:
-          multilib_target_string: ${{ steps.target-string.outputs.target_string }}
-          build_log_name: ${{ steps.build-log.outputs.build_log_name }}
-          upload_stage2_artifacts: 'false'
-          mode: ${{ inputs.mode }}
-          target: ${{ inputs.target }}
-          gcchash: ${{ inputs.patch_applied_gcchash }}
-          multilib: ${{ inputs.multilib }}
-
-      - name: Get build status
-        if: ${{ always() }}
-        id: build-status
-        run: |
-          export BUILD_STATUS=${{steps.build-gcc-status.outputs.build_status }}
-          echo "build_status=$BUILD_STATUS" >> $GITHUB_OUTPUT
+      - run: python -m pip install --no-cache-dir -r requirements.txt
 
       - name: Report build completion status
-        if: ${{ always() }}
         uses: ./.github/actions/report-build-complete-status
         with:
-          build_status: ${{ steps.build-status.outputs.build_status }}
+          build_status: ${{ needs.execute.outputs.build_status == 'success' && 'success' || 'failure' }}
+          patch_id: ${{ inputs.patch_id }}
           patch_name: ${{ inputs.patch_name }}
-          build_log_name: ${{ steps.build-log.outputs.build_log_name }}
+          build_log_name: ${{ inputs.patch_id }}-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}-build-log
           target: ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}
           baseline_hash: ${{ inputs.baseline_hash }}
           tot_hash: ${{ inputs.tot_hash }}
@@ -482,54 +170,33 @@ jobs:
           issue_num: ${{ inputs.issue_num }}
           build_comment_id: ${{ inputs.build_comment_id }}
           additional_info: ${{ inputs.additional_info }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           gist_token: ${{ secrets.GIST_TOKEN }}
           patchwork_token: ${{ secrets.PATCHWORK_API }}
-          repository: ${{ env.PRECOMMIT_REPOSITORY }}
+          repository: ${{ github.repository }}
 
-      - name: Build test starting report
+      - name: Record testsuite completion
         if: ${{ inputs.build_only == 'false' }}
+        working-directory: riscv-gnu-toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ inputs.test_comment_id }}
+          TARGET: ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }}
+          GCC_HASH: ${{ inputs.baseline_hash }}
+          INFO_URL: ${{ inputs.additional_info }}
+          TEST_SUCCEEDED: ${{ needs.execute.outputs.test_status == 'success' }}
         run: |
-          python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Pending' -comment ${{ inputs.test_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Testsuite' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.baseline_hash }}
-          printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
+          if [[ "$TEST_SUCCEEDED" == true ]]; then
+            state='Complete. Full report will be displayed once all targets are complete'
+          else
+            state='Testsuite did not complete. See the Actions run for details.'
+          fi
+          python scripts/update_issue_status.py -token "$GH_TOKEN" -state "$state" -comment "$COMMENT_ID" -target "$TARGET" -check Testsuite -repo "$GITHUB_REPOSITORY" -baseline "$GCC_HASH"
+          printf '\n[Additional information](%s)\n' "$INFO_URL" >> comment.md
 
-      - name: Update test pending report comment
+      - uses: ./.github/actions/update-comment
         if: ${{ inputs.build_only == 'false' }}
-        uses: ./.github/actions/update-comment
         with:
           comment_id: ${{ inputs.test_comment_id }}
           file_path: riscv-gnu-toolchain/comment.md
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Report testing
-        if: ${{ inputs.build_only == 'false' && github.workflow != 'Staging' }}
-        run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing started' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'pending' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
-
-      - name: Replace allowlist
-        run: |
-          rm -rf test/
-          cp -r ../test/ .
-
-      - name: Run Testsuite
-        if: ${{ inputs.build_only == 'false' }}
-        uses: ./.github/actions/common/run-testsuite
-        with:
-          mode: ${{ inputs.mode }}
-          target: ${{ inputs.target }}
-          gcchash: ${{ inputs.patch_applied_gcchash }}
-          multilib: ${{ inputs.multilib }}
-
-      - name: Build test complete report
-        if: ${{ inputs.build_only == 'false' }}
-        run: |
-          python scripts/update_issue_status.py -token ${{ secrets.GITHUB_TOKEN }} -state 'Complete. Full report will be displayed once all targets are complete' -comment ${{ inputs.test_comment_id }} -target ${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.multilib }} -check 'Testsuite' -repo "${PRECOMMIT_REPOSITORY}" -baseline ${{ inputs.baseline_hash }}
-          printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
-
-      - name: Update test complete report comment
-        if: ${{ inputs.build_only == 'false' }}
-        uses: ./.github/actions/update-comment
-        with:
-          comment_id: ${{ inputs.test_comment_id }}
-          file_path: riscv-gnu-toolchain/comment.md
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ github.token }}

@@ -4,6 +4,9 @@ inputs:
   build_status:
     description: 'Build status'
     required: true
+  patch_id:
+    description: 'Patchwork ID from trusted discovery metadata'
+    required: true
   patch_name:
     description: 'Name of patch'
     required: true
@@ -56,15 +59,23 @@ runs:
           python scripts/update_issue_status.py -token ${{ inputs.github_token }} -state 'Success' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.target }} -check 'Build GCC' -repo '${{ inputs.repository }}' -baseline $HASH
           printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
 
+      - name: Read build log previews
+        id: preview
+        if: ${{ inputs.build_status == 'failure' && inputs.gist_token != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ inputs.github_token }}
+          LOG_NAME: ${{ inputs.build_log_name }}
+        run: python3 scripts/build_log_preview.py "$LOG_NAME" "$RUNNER_TEMP/build-preview"
+        continue-on-error: true
+
       - name: Build combined stdout/stderr gist
-        if: ${{ inputs.build_status == 'failure' }}
+        if: ${{ steps.preview.outcome == 'success' }}
         id: tail-gist-url
         shell: bash
         working-directory: riscv-gnu-toolchain
         run: |
-          ONE_MB_IN_BYTES=1048000
-          tail -c $ONE_MB_IN_BYTES build/${{ inputs.build_log_name }}.log >> gist.md
-          python3 ./scripts/create_gist.py --token ${{ inputs.gist_token }} --input gist.md --output gist_url.txt --title ${{ inputs.issue_num }}_${{ inputs.patch_name }}_${{ inputs.build_log_name }}.log
+          python3 ./scripts/create_gist.py --token ${{ inputs.gist_token }} --input "$RUNNER_TEMP/build-preview/stdout.txt" --output gist_url.txt --title ${{ inputs.issue_num }}_${{ inputs.patch_name }}_${{ inputs.build_log_name }}.log
           GIST_URL=$(cat gist_url.txt)
           echo "gist url: $GIST_URL"
           RAW_GIST_URL=$GIST_URL/raw/${{ inputs.issue_num }}_${{ inputs.patch_name }}_${{ inputs.build_log_name }}.log
@@ -73,14 +84,12 @@ runs:
         continue-on-error: true
 
       - name: Build stderr report gist
-        if: ${{ inputs.build_status == 'failure' }}
+        if: ${{ steps.preview.outcome == 'success' }}
         id: stderr-gist-url
         shell: bash
         working-directory: riscv-gnu-toolchain
         run: |
-          ONE_MB_IN_BYTES=1048000
-          tail -c $ONE_MB_IN_BYTES build/${{ inputs.build_log_name }}-stderr.log >> gist.md
-          python3 ./scripts/create_gist.py --token ${{ inputs.gist_token }} --input gist.md --output gist_url.txt --title ${{ inputs.issue_num }}_${{ inputs.patch_name }}_${{ inputs.build_log_name }}-stderr.log
+          python3 ./scripts/create_gist.py --token ${{ inputs.gist_token }} --input "$RUNNER_TEMP/build-preview/stderr.txt" --output gist_url.txt --title ${{ inputs.issue_num }}_${{ inputs.patch_name }}_${{ inputs.build_log_name }}-stderr.log
           GIST_URL=$(cat gist_url.txt)
           echo "gist url: $GIST_URL"
           RAW_GIST_URL=$GIST_URL/raw/${{ inputs.issue_num }}_${{ inputs.patch_name }}_${{ inputs.build_log_name }}-stderr.log
@@ -92,9 +101,16 @@ runs:
         if: ${{ inputs.build_status == 'failure' }}
         shell: bash
         working-directory: riscv-gnu-toolchain
+        env:
+          LOG_NAME: ${{ inputs.build_log_name }}
+          STDOUT_URL: ${{ steps.tail-gist-url.outputs.gist_url }}
+          STDERR_URL: ${{ steps.stderr-gist-url.outputs.gist_url }}
         run: |
           if [ '${{ inputs.build_only }}' == 'true' ]; then export HASH=${{ inputs.tot_hash }}; else export HASH=${{ inputs.baseline_hash }}; fi
-          python scripts/update_issue_status.py -token ${{ inputs.github_token }} -state 'Build failure. Please check the ${{ inputs.build_log_name }} artifact. [Tail Preview (1MB)](${{ steps.tail-gist-url.outputs.gist_url }}), [Stderr preview](${{ steps.stderr-gist-url.outputs.gist_url }})' -comment ${{ inputs.build_comment_id }} -target ${{ inputs.target }} -check 'Build GCC' -repo '${{ inputs.repository }}' -baseline $HASH
+          state="Build failure. See the $LOG_NAME artifact in [this run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          if [[ -n "$STDOUT_URL" ]]; then state+=" [Tail preview]($STDOUT_URL)"; fi
+          if [[ -n "$STDERR_URL" ]]; then state+=" [Stderr preview]($STDERR_URL)"; fi
+          python scripts/update_issue_status.py -token ${{ inputs.github_token }} -state "$state" -comment ${{ inputs.build_comment_id }} -target ${{ inputs.target }} -check 'Build GCC' -repo '${{ inputs.repository }}' -baseline $HASH
           printf "\n[Additional information](${{ inputs.additional_info }})\n" >> comment.md
 
       - name: Update build complete report comment
@@ -121,11 +137,11 @@ runs:
         shell: bash
         working-directory: riscv-gnu-toolchain
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'fail' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid '${{ inputs.patch_id }}'  -desc 'Build failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'fail' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
 
       - name: Report build success
         if: ${{ inputs.build_status == 'success' && github.workflow != 'Staging' }}
         shell: bash
         working-directory: riscv-gnu-toolchain
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Build passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'success' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo '${{ inputs.repository }}' -pid '${{ inputs.patch_id }}'  -desc 'Build passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.build_comment_id }}' -state 'success' -context 'build--${{ inputs.target }}' -token '${{ inputs.patchwork_token }}'

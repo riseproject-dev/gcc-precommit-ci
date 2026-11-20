@@ -82,7 +82,7 @@ recovery run therefore needs attention even if some patch issues look complete.
 
 Patch polling and staging metadata lookup run on `ubuntu-24.04`; they do not
 wait behind self-hosted builds or require a `ping` runner. Long builds require
-`self-hosted`, `linux`, `x64`, and `rise-gcc-ci`, with a registration available to
+`self-hosted`, `linux`, `x64`, and `rise-precommit-regression-07`, with a registration available to
 this repository. Each build/test job uses 32 parallel workers.
 
 Provision dependencies using the maintenance account before starting the
@@ -91,7 +91,10 @@ They erase their own Actions workspace and execute incoming patch code, so use
 an isolated, disposable execution environment with a separate workspace from
 post-commit. A runner group controls routing; it does not provide execution
 isolation. Keep the polling/reporting credentials out of the patch execution
-environment when deploying the runner.
+environment when deploying the runner. The reusable `regression-worker.yaml`
+workflow receives read-only Actions and repository access. GitHub-hosted jobs
+in `test-regression.yaml` publish queued and completed checks. A failed build
+links its Actions run even when its optional log preview is unavailable.
 
 ## Dependency Updates
 
