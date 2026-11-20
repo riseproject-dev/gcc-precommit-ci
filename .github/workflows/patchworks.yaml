@@ -71,7 +71,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install Python dependencies
         run: python -m pip install -r ../requirements.txt
@@ -125,7 +124,7 @@ jobs:
       - name: List patch artifacts
         id: list_patches
         run: |
-          export PATCHLIST="$(cat artifact_names.txt)"
+          PATCHLIST=$(python ../scripts/patch_matrix.py)
           echo "patch_list=$PATCHLIST" >> $GITHUB_OUTPUT
 
       - name: Upload patch urls
@@ -147,11 +146,11 @@ jobs:
           retention-days: 90
 
     outputs:
-      list_of_patch_names: ${{ steps.list_patches.outputs.patch_list }}
+      patch_targets: ${{ steps.list_patches.outputs.patch_list }}
 
   init-submodules:
     needs: [fetch_patches]
-    if: ${{ needs.fetch_patches.outputs.list_of_patch_names != '[]' }}
+    if: ${{ needs.fetch_patches.outputs.patch_targets != '[]' }}
     uses: ./.github/workflows/init-submodules.yaml
     with:
       baseline_hash: ${{ inputs.baseline_gcc_hash }}
@@ -163,7 +162,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        patch_name: ${{ fromJSON(needs.fetch_patches.outputs.list_of_patch_names) }}
+        include: ${{ fromJSON(needs.fetch_patches.outputs.patch_targets) }}
     uses: ./.github/workflows/run-checks.yaml
     permissions:
       actions: read
@@ -171,6 +170,7 @@ jobs:
       issues: write
     with:
       patch_name: ${{ matrix.patch_name }}
+      patch_id: ${{ matrix.patch_id }}
       baseline_hash: ${{ needs.init-submodules.outputs.baseline_hash }}
       tot_hash: ${{ needs.init-submodules.outputs.tot_hash }}
       original_patch_issue_num: ${{ inputs.original_patch_issue_num }}

@@ -16,7 +16,6 @@ runs:
       uses: ./.github/actions/common/download-comparison-artifacts
       with:
         report-artifact-name: gcc-linux-rv64gc_zba_zbb_zbc_zbs-lp64d-${{ inputs.gcchash }}-multilib-report.log
-        binary-artifact-name: gcc-linux-rv64gc_zba_zbb_zbc_zbs-lp64d-${{ inputs.gcchash }}-multilib
         github-token: ${{ inputs.token }}
         repo: ${{ inputs.repo }}
 
@@ -24,7 +23,6 @@ runs:
       uses: ./.github/actions/common/download-comparison-artifacts
       with:
         report-artifact-name: gcc-linux-rv64gcv-lp64d-${{ inputs.gcchash }}-multilib-report.log
-        binary-artifact-name: gcc-linux-rv64gcv-lp64d-${{ inputs.gcchash }}-multilib
         github-token: ${{ inputs.token }}
         repo: ${{ inputs.repo }}
 
@@ -32,7 +30,6 @@ runs:
       uses: ./.github/actions/common/download-comparison-artifacts
       with:
         report-artifact-name: gcc-newlib-rv64gcv-lp64d-${{ inputs.gcchash }}-multilib-report.log
-        binary-artifact-name: gcc-newlib-rv64gcv-lp64d-${{ inputs.gcchash }}-multilib
         github-token: ${{ inputs.token }}
         repo: ${{ inputs.repo }}
 

@@ -24,7 +24,6 @@ permissions:
 
 env:
   POSTCOMMIT_REPOSITORY: riseproject-dev/gcc-postcommit-ci
-  POSTCOMMIT_TOKEN: ${{ secrets.RISE_CI_READ_TOKEN }}
 
 jobs:
   init-submodules:
@@ -43,19 +42,19 @@ jobs:
 
       - name: Determine baseline
         id: baseline-hash
+        env:
+          REQUESTED_BASELINE: ${{ inputs.baseline_hash }}
+          POSTCOMMIT_TOKEN: ${{ secrets.RISE_CI_READ_TOKEN }}
         run: |
-          if [ '${{ inputs.baseline_hash }}' == '' ] ; then
-            if [ -z "${POSTCOMMIT_TOKEN}" ]; then
-              echo "::error::RISE_CI_READ_TOKEN is required to read baseline issues from ${POSTCOMMIT_REPOSITORY}."
-              exit 1
-            fi
-            python ./scripts/get_baseline_hash.py -repo "${POSTCOMMIT_REPOSITORY}" -token "${POSTCOMMIT_TOKEN}"
-            export BASELINE_HASH=$(cat baseline.txt)
+          if [[ -n "$REQUESTED_BASELINE" ]]; then
+            baseline=$REQUESTED_BASELINE
           else
-            export BASELINE_HASH=${{ inputs.baseline_hash }}
+            : "${POSTCOMMIT_TOKEN:?RISE_CI_READ_TOKEN is required to read baseline issues}"
+            python ./scripts/get_baseline_hash.py -repo "$POSTCOMMIT_REPOSITORY" -token "$POSTCOMMIT_TOKEN"
+            baseline=$(cat baseline.txt)
           fi
-          echo $BASELINE_HASH
-          echo "baseline_hash=$BASELINE_HASH" >> $GITHUB_OUTPUT
+          [[ "$baseline" =~ ^[0-9a-fA-F]{7,40}$ ]]
+          echo "baseline_hash=$baseline" >> "$GITHUB_OUTPUT"
 
       - name: Retrieve cache
         id: retrieve-cache
@@ -70,7 +69,7 @@ jobs:
             riscv-gnu-toolchain/glibc
             riscv-gnu-toolchain/newlib
             riscv-gnu-toolchain/qemu
-          key: submodules-archive-17 # Invalidate cached source URLs after the mirror switch
+          key: precommit-hosted-sources-v1 # New namespace after isolating patch workers from Actions caches
 
       - name: Synchronize submodule URLs
         run: git submodule sync --recursive
@@ -103,16 +102,23 @@ jobs:
       - name: Determine tip-of-tree hash
         working-directory: riscv-gnu-toolchain/gcc
         id: tot-hash
+        env:
+          REQUESTED_TIP: ${{ inputs.tot_hash }}
         run: |
-          if [ '${{ inputs.tot_hash }}' != '' ]; then git checkout ${{ inputs.tot_hash }}; fi
-          export TOT_HASH=$(git rev-parse HEAD)
-          echo $TOT_HASH
-          echo "tot_hash=$TOT_HASH" >> $GITHUB_OUTPUT
+          if [[ -n "$REQUESTED_TIP" ]]; then
+            [[ "$REQUESTED_TIP" =~ ^[0-9a-fA-F]{7,40}$ ]]
+            git checkout --detach "$REQUESTED_TIP"
+          fi
+          echo "tot_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Checkout baseline GCC hash
         working-directory: riscv-gnu-toolchain/gcc
+        id: checkout-baseline
+        env:
+          BASELINE: ${{ steps.baseline-hash.outputs.baseline_hash }}
         run: |
-          git checkout ${{ steps.baseline-hash.outputs.baseline_hash }}
+          git checkout --detach "$BASELINE"
+          echo "baseline_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Cache submodules
         if: steps.retrieve-cache.outputs.cache-hit != 'true'
@@ -127,23 +133,21 @@ jobs:
             riscv-gnu-toolchain/glibc
             riscv-gnu-toolchain/newlib
             riscv-gnu-toolchain/qemu
-          key: submodules-archive-17
+          key: precommit-hosted-sources-v1
 
-      - name: Make cache zip
+      - name: Archive sources for this run
         run: |
           zip -r cache.zip .git binutils dejagnu gcc gdb glibc newlib qemu
 
-      # Use artifact rather than cache since cache downloads are flaky/hang.
-      # Artifacts are reliable but ~30 min slower to set up.
-      # Setup is done on one runner, so this isn't a show stopper.
-      - name: Upload git cache
+      # All patch workers in this run can reuse the hosted source checkout.
+      - name: Upload source archive
         uses: actions/upload-artifact@v4
         with:
-          name: gcc-sources-${{ steps.baseline-hash.outputs.baseline_hash }}
+          name: gcc-sources-${{ steps.checkout-baseline.outputs.baseline_hash }}
           path: |
             riscv-gnu-toolchain/cache.zip
           retention-days: 5
 
     outputs:
-      baseline_hash: ${{ steps.baseline-hash.outputs.baseline_hash }}
+      baseline_hash: ${{ steps.checkout-baseline.outputs.baseline_hash }}
       tot_hash: ${{ steps.tot-hash.outputs.tot_hash }}

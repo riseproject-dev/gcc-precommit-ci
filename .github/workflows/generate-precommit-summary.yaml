@@ -3,6 +3,9 @@ name: Generate-Summary
 on:
   workflow_call:
     inputs:
+      patch_id:
+        required: true
+        type: string
       patch_name:
         required: true
         type: string
@@ -33,9 +36,12 @@ on:
 
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCH_ID: ${{ inputs.patch_id }}
   POSTCOMMIT_REPOSITORY: riseproject-dev/gcc-postcommit-ci
-  POSTCOMMIT_TOKEN: ${{ secrets.RISE_CI_READ_TOKEN }}
-  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+  PATCHWORK_REPORTING_ENABLED: >-
+    ${{ (vars.PATCHWORK_REPORTING_ENABLED == 'true' ||
+         (github.workflow == 'Patchworks' && github.event_name == 'workflow_dispatch' &&
+          github.sha == vars.PATCHWORK_REPORTING_ENABLED)) && 'true' || 'false' }}
 
 jobs:
   compare-artifacts:
@@ -67,13 +73,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install Python dependencies
         run: |
           pip install -r ../requirements.txt --break-system-packages
 
       - name: Download baseline sum files
+        env:
+          POSTCOMMIT_TOKEN: ${{ secrets.RISE_CI_READ_TOKEN }}
         run: |
           if [ -z "${POSTCOMMIT_TOKEN}" ]; then
             echo "::error::RISE_CI_READ_TOKEN is required to read baseline artifacts from ${POSTCOMMIT_REPOSITORY}."
@@ -141,20 +148,17 @@ jobs:
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/rate_limit
 
-      - name: Extract artifacts
-        run: |
-          ls ./temp/
-          mkdir -p current_logs
-          for f in $(ls ./temp/*report.zip); do
-            unzip $f -d ./current_logs || true
-          done
-          ls current_logs
-
       - name: Separate multilib logs
+        env:
+          GCC_HASH: ${{ inputs.patch_applied_gcchash }}
         run: |
-          python scripts/separate_multilib_results.py -indir current_logs -outdir current_logs
-          mv current_logs/gcc-newlib-rv32imc_zba_zbb_zbc_zbs-ilp32-${{ inputs.patch_applied_gcchash }}-non-multilib-report.log current_logs/gcc-newlib-rv32imc_zba_zbb_zbc_zbs-ilp32-${{ inputs.patch_applied_gcchash }}-multilib-report.log
-        continue-on-error: true
+          if ! python scripts/separate_multilib_results.py -indir current_logs -outdir current_logs; then
+            echo "multilib|Could not parse testsuite report" >> current_logs/failed_testsuite.txt
+          fi
+          rv32_log="current_logs/gcc-newlib-rv32imc_zba_zbb_zbc_zbs-ilp32-$GCC_HASH"
+          if [[ -f "$rv32_log-non-multilib-report.log" ]]; then
+            mv "$rv32_log-non-multilib-report.log" "$rv32_log-multilib-report.log"
+          fi
 
       - name: Compare artifacts
         run: |
@@ -198,12 +202,6 @@ jobs:
           retention-days: 90
 
       # Compare build warnings
-      - name: Download patches artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.patch_name }}-downloaded-patches
-          path: ./riscv-gnu-toolchain/patches
-
       ################################################################################
       #    remove build log comparison stuff while we disable build-only runners     #
       ################################################################################
@@ -223,7 +221,7 @@ jobs:
       #     echo "build_warnings_directory=$(readlink -f ./build_warnings/)" >> $GITHUB_OUTPUT
       #     echo "new_build_warnings_path=$(readlink -f ./build_warnings/new_build_warnings.md)" >> $GITHUB_OUTPUT
       #     echo "resolved_build_warnings_path=$(readlink -f ./build_warnings/resolved_build_warnings.md)" >> $GITHUB_OUTPUT
-      #     echo "patch_hash=$(tail -n 1 patches/${{ inputs.patch_name }})" >> $GITHUB_OUTPUT
+      #     echo "patch_hash=$PATCH_ID" >> $GITHUB_OUTPUT
 
       #
       # begin downloading current workflow build logs
@@ -325,7 +323,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install Python dependencies
         run: |
@@ -349,33 +346,22 @@ jobs:
           name: ${{ inputs.patch_applied_gcchash }}-previous-logs
           path: ./riscv-gnu-toolchain/previous_logs
 
-      # debug logs
-      - name: Download linux rv64 bitmanip debug url artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: gcc-linux-rv64gc_zba_zbb_zbc_zbs-lp64d-${{ inputs.patch_applied_gcchash }}-multilib-debug-url.md
-          path: ./riscv-gnu-toolchain/
-        continue-on-error: true
-
-      - name: Download linux rv64 vector debug url artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: gcc-linux-rv64gcv-lp64d-${{ inputs.patch_applied_gcchash }}-multilib-debug-url.md
-          path: ./riscv-gnu-toolchain/
-        continue-on-error: true
-
-      - name: Download newlib rv64 vector debug url artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: gcc-newlib-rv64gcv-lp64d-${{ inputs.patch_applied_gcchash }}-multilib-debug-url.md
-          path: ./riscv-gnu-toolchain
-        continue-on-error: true
-
-      - name: Download patches artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.patch_name }}-downloaded-patches
-          path: ./riscv-gnu-toolchain/patches
+      - name: Link testsuite logs from this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GCC_HASH: ${{ inputs.patch_applied_gcchash }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.name, .id] | @tsv' > run-artifacts.tsv
+          : > debug-links.md
+          for target in linux-rv64gc_zba_zbb_zbc_zbs-lp64d linux-rv64gcv-lp64d newlib-rv64gcv-lp64d; do
+            name="gcc-$target-$GCC_HASH-multilib-debug-output.log"
+            id=$(awk -F '\t' -v name="$name" '$1 == name {print $2; exit}' run-artifacts.tsv)
+            if [[ "$id" =~ ^[0-9]+$ ]]; then
+              printf '%s testsuite logs: [zip](%s/%s/actions/runs/%s/artifacts/%s)\n' \
+                "$target" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$id" >> debug-links.md
+            fi
+          done
 
       - name: Print API usage info
         run: |
@@ -420,7 +406,7 @@ jobs:
           fi
           printf "\n### Testsuite download links\n\n" >> trimmed_comment.md
           printf "Please check the Additional Information Build Targets section to see which testsuite log to look at. If you cannot download the artifacts or get a 404 error, you may need to sign in to github first.\n\n" >> trimmed_comment.md
-          cat gcc-*.md >> trimmed_comment.md
+          cat debug-links.md >> trimmed_comment.md
           echo "" >> trimmed_comment.md
           printf "\n[Additional information](${{ inputs.additional_info }})\n" >> trimmed_comment.md
           cat trimmed_comment.md
@@ -507,10 +493,10 @@ jobs:
         if: ${{ github.workflow != 'Staging' && (contains(steps.issue-labels.outputs.issue_labels, 'build-failure') || contains(steps.issue-labels.outputs.issue_labels, 'testsuite-failure') || contains(steps.issue-labels.outputs.issue_labels, 'new-regressions') || contains(steps.issue-labels.outputs.issue_labels, 'invalid')) }}
         id: report-failure
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 ./patches/${{ inputs.patch_name }}) -desc 'Testing failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'fail' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID" -desc 'Testing failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'fail' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
 
       - name: Report Success
         if: ${{ github.workflow != 'Staging' && steps.report-failure.outcome == 'skipped' }}
         id: report-success
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 ./patches/${{ inputs.patch_name }}) -desc 'Testing passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'success' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID" -desc 'Testing passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.test_comment_id }}' -state 'success' -context 'test' -token '${{ secrets.PATCHWORK_API }}'

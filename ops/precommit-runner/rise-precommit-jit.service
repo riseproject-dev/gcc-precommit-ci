@@ -1,0 +1,12 @@
+[Unit]
+Description=Replenish the RISE GCC pre-commit single-job runner on 07
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=rise-precommit-ci
+EnvironmentFile=/etc/rise-precommit-jit/app.conf
+LoadCredential=app-key.pem:/etc/rise-precommit-jit/app-key.pem
+ExecStart=/usr/bin/python3 /usr/local/lib/rise-precommit-jit/replenish.py
+UMask=0077

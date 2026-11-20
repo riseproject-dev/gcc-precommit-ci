@@ -29,7 +29,7 @@ and Patchwork checks. Out-of-scope IDs produce an empty build queue.
 
 ## Shadow And Production Modes
 
-Keep `PATCHWORK_REPORTING_ENABLED` unset or different from `true` during shadow
+Keep `PATCHWORK_REPORTING_ENABLED` unset or set to `false` during shadow
 testing. GitHub issues, artifacts, builds, and comparisons still run, but no
 Patchwork check may be written. Logs must explicitly say that reporting was
 skipped.
@@ -43,6 +43,13 @@ Before enabling writes:
 - verify emitted contexts use the `toolchain-ci-rise-` prefix;
 - run one real patch in shadow mode and compare it with the legacy result;
 - restrict manual result overrides to designated repository maintainers.
+
+To validate publication before enabling all schedules, set the repository variable
+`PATCHWORK_REPORTING_ENABLED` to the full 40-character SHA of the reviewed
+workflow revision, then dispatch `Patchworks` at that revision. Only a manual
+`Patchworks` run with that exact SHA may publish in this mode. Verify the RISE
+check and its target URL on the selected patch before switching the variable to
+`true` for normal production reporting or `false` to stop writes.
 
 Set `PATCHWORK_REPORTING_ENABLED=true` only after those checks. A missing token,
 non-2xx Patchwork response, unexpected username, or legacy `toolchain-ci-rivos-`
@@ -82,7 +89,7 @@ recovery run therefore needs attention even if some patch issues look complete.
 
 Patch polling and staging metadata lookup run on `ubuntu-24.04`; they do not
 wait behind self-hosted builds or require a `ping` runner. Long builds require
-`self-hosted`, `linux`, `x64`, and `rise-gcc-ci`, with a registration available to
+`self-hosted`, `linux`, `x64`, and `rise-precommit-regression-07`, with a registration available to
 this repository. Each build/test job uses 32 parallel workers.
 
 Provision dependencies using the maintenance account before starting the
@@ -91,7 +98,10 @@ They erase their own Actions workspace and execute incoming patch code, so use
 an isolated, disposable execution environment with a separate workspace from
 post-commit. A runner group controls routing; it does not provide execution
 isolation. Keep the polling/reporting credentials out of the patch execution
-environment when deploying the runner.
+environment when deploying the runner. The reusable `regression-worker.yaml`
+workflow receives read-only Actions and repository access. GitHub-hosted jobs
+in `test-regression.yaml` publish queued and completed checks. A failed build
+links its Actions run even when its optional log preview is unavailable.
 
 ## Dependency Updates
 
@@ -99,7 +109,8 @@ Merge shared toolchain changes first. For changes confined to pre-commit patch
 selection, update the pre-commit gitlink to the published toolchain revision.
 For changes that affect baseline comparability, update post-commit and wait for
 a new valid baseline before updating pre-commit. When source submodules change,
-bump the corresponding `submodules-archive-` restore/save keys.
+bump the `precommit-hosted-sources-` restore/save key in the hosted source job.
+Patch workers receive the prepared `gcc-sources-<baseline>` artifact for their run.
 
 ## Incident Stop Controls
 

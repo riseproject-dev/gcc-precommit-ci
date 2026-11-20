@@ -1,9 +1,7 @@
 name: "Download Comparison Artifacts"
-description: "Downloads artifacts needed for run comparison"
+description: "Collect one testsuite report from the current workflow run"
 inputs:
   report-artifact-name:
-    required: true
-  binary-artifact-name:
     required: true
   github-token:
     required: true
@@ -13,44 +11,22 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Download report from this workflow
-      if: ${{ !cancelled() }}
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ inputs.report-artifact-name }}
-        path: ./riscv-gnu-toolchain/current_logs
-      continue-on-error: true
-
-    - name: Download report from another workflow
-      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' }}
-      shell: bash
-      run: |
-        cd riscv-gnu-toolchain
-        python ./scripts/download_artifact.py -name ${{ inputs.report-artifact-name }} -repo ${{ inputs.repo }} -token ${{ inputs.github-token }} -outdir current_logs
-      continue-on-error: true
-
-    - name: Download rv32 non-multilib binary
-      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' }}
-      id: same-workflow-binary
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ inputs.binary-artifact-name }}
-        path: ./riscv-gnu-toolchain/temp
-      continue-on-error: true
-
-    - name: Download binary from another workflow
-      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' && steps.same-workflow-binary.outcome == 'failure' }}
-      shell: bash
-      run: |
-        cd riscv-gnu-toolchain
-        python ./scripts/download_artifact.py -name ${{ inputs.binary-artifact-name }} -repo ${{ inputs.repo }} -token ${{ inputs.github-token }} -outdir temp
-      continue-on-error: true
-
-    - name: Record missing testsuite report
-      if: ${{ !cancelled() && hashFiles(format('./riscv-gnu-toolchain/current_logs/{0}', inputs.report-artifact-name)) == '' }}
+    - name: Collect the expected report from this run
       shell: bash
       env:
-        REPORT_ARTIFACT_NAME: ${{ inputs.report-artifact-name }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPOSITORY: ${{ inputs.repo }}
+        REPORT_NAME: ${{ inputs.report-artifact-name }}
       run: |
+        directory=$(mktemp -d)
+        gh api --paginate "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+          --jq '.artifacts[] | select(.expired == false and .size_in_bytes <= 268435456) | [.name, .id] | @tsv' > "$directory/artifacts.tsv"
+        artifact_id=$(awk -F '\t' -v name="$REPORT_NAME" '$1 == name {print $2; exit}' "$directory/artifacts.tsv")
+        if [[ "$artifact_id" =~ ^[0-9]+$ ]]; then
+          gh api "repos/$REPOSITORY/actions/artifacts/$artifact_id/zip" > "$directory/report.zip"
+          if python scripts/collect_testsuite_report.py "$directory/report.zip" "$REPORT_NAME" riscv-gnu-toolchain/current_logs; then
+            exit 0
+          fi
+        fi
         mkdir -p riscv-gnu-toolchain/current_logs
-        printf '%s|Testsuite report artifact could not be downloaded\n' "$REPORT_ARTIFACT_NAME" >> riscv-gnu-toolchain/current_logs/failed_testsuite.txt
+        printf '%s|Testsuite report missing or invalid in this run\n' "$REPORT_NAME" >> riscv-gnu-toolchain/current_logs/failed_testsuite.txt

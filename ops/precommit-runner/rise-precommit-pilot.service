@@ -5,7 +5,7 @@ Description=RISE pre-commit isolated single-job pilot
 Type=simple
 WorkingDirectory=/srv/rise-precommit-ci
 ExecStart=/usr/bin/podman run --rm --pull=never --name rise-precommit-07-pilot --userns=keep-id:uid=1001,gid=1001 --network=slirp4netns:allow_host_loopback=false --cpus=20 --memory=76g --pids-limit=8192 --cap-drop=ALL --security-opt=no-new-privileges --secret=runner-jit-config,uid=1001,gid=1001,mode=0400 --volume=/srv/rise-precommit-ci/diag:/opt/actions-runner/_diag localhost/rise-precommit-runner:20261117
-ExecStop=/usr/bin/podman stop --time=900 rise-precommit-07-pilot
+ExecStop=/usr/bin/podman stop --ignore --time=900 rise-precommit-07-pilot
 Restart=no
 TimeoutStartSec=120
 TimeoutStopSec=960

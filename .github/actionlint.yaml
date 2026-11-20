@@ -1,3 +1,4 @@
 self-hosted-runner:
   labels:
     - rise-gcc-ci
+    - rise-precommit-regression-07

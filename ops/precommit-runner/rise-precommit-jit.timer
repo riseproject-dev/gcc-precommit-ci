@@ -1,0 +1,10 @@
+[Unit]
+Description=Keep one ephemeral RISE GCC pre-commit runner ready on 07
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
