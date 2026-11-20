@@ -54,8 +54,8 @@ Do not use personal GitHub tokens for any of these secrets.
 | --- | --- | --- | --- | --- |
 | `patchworks.yaml/fetch_patches` | `ubuntu-24.04` | Patchwork polling and patch artifact creation | Python dependencies and zip installed by the workflow | GitHub-hosted |
 | `staging.yaml/get-patch-info` | `ubuntu-24.04` | Staging patch lookup for pull requests | Python dependencies and zip installed by the workflow | GitHub-hosted |
-| `test-regression.yaml/rerun-timeouts` | `self-hosted`, `linux`, `x64`, `rise-gcc-ci` | Long retry builds and tests | GCC build prerequisites, Python, enough disk for toolchain builds | Dedicated RISE runner group |
-| `test-regression.yaml/run-on-self-hosted` | `self-hosted`, `linux`, `x64`, `rise-gcc-ci` | Long production build and tests | GCC build prerequisites, Python, enough disk for toolchain builds | Dedicated RISE runner group |
+| `regression-worker.yaml/rerun-timeouts` | `self-hosted`, `linux`, `x64`, `rise-precommit-regression-07` | Long retry builds and tests | GCC build prerequisites, Python, enough disk for toolchain builds | Dedicated RISE runner group |
+| `regression-worker.yaml/run-on-self-hosted` | `self-hosted`, `linux`, `x64`, `rise-precommit-regression-07` | Long production build and tests | GCC build prerequisites, Python, enough disk for toolchain builds | Dedicated RISE runner group |
 
 Polling and staging metadata lookup do not consume a self-hosted build slot.
 GitHub schedules can be delayed; retain the nightly recovery workflow and check
