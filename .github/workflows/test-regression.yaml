@@ -120,6 +120,7 @@ jobs:
   execute:
     needs: [report-queued]
     uses: ./.github/workflows/regression-worker.yaml
+    cache-mode: none
     permissions:
       actions: read
       contents: read

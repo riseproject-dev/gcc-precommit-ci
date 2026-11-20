@@ -53,6 +53,7 @@ class ReportingTests(unittest.TestCase):
             "uses: ./.github/workflows/regression-worker.yaml", reporters["execute"]
         )
         self.assertNotIn("secrets:", reporters["execute"])
+        self.assertIn("cache-mode: none", reporters["execute"])
         for name in ("report-queued", "report-complete"):
             self.assertIn("runs-on: ubuntu-24.04", reporters[name])
             self.assertIn("environment: production", reporters[name])
