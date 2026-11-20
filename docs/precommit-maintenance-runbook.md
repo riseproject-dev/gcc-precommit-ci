@@ -102,7 +102,8 @@ Merge shared toolchain changes first. For changes confined to pre-commit patch
 selection, update the pre-commit gitlink to the published toolchain revision.
 For changes that affect baseline comparability, update post-commit and wait for
 a new valid baseline before updating pre-commit. When source submodules change,
-bump the corresponding `submodules-archive-` restore/save keys.
+bump the `precommit-hosted-sources-` restore/save key in the hosted source job.
+Patch workers receive the prepared `gcc-sources-<baseline>` artifact for their run.
 
 ## Incident Stop Controls
 
