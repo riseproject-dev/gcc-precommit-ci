@@ -91,6 +91,11 @@ jobs:
           echo "$PATCH_ID"
           echo "patch_id=$PATCH_ID" >> "$GITHUB_OUTPUT"
 
+      - name: Verify the override targets a GCC RISC-V patch
+        env:
+          PATCH_ID: ${{ steps.patch-id.outputs.patch_id }}
+        run: python scripts/riscv_patch_scope.py "$PATCH_ID"
+
     outputs:
       patch_name: ${{ steps.patch-name.outputs.patch_name }}
       patch_id: ${{ steps.patch-id.outputs.patch_id }}

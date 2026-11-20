@@ -175,6 +175,18 @@ class WorkflowRecoveryTests(unittest.TestCase):
             )
         )
 
+    def test_empty_patch_selection_skips_build_setup(self):
+        for workflow in ("patchworks.yaml", "downtime-runner.yaml"):
+            with self.subTest(workflow=workflow):
+                text = (WORKFLOWS / workflow).read_text()
+                setup = text.split("\n  init-submodules:\n", 1)[1]
+                expression = condition(setup)
+                output = "needs.fetch_patches.outputs.list_of_patch_names"
+                self.assertFalse(evaluate(expression, {output: "[]"}))
+                self.assertTrue(evaluate(expression, {output: '["one-patch"]'}))
+                matrix = text.split("\n  patch_matrix:\n", 1)[1]
+                self.assertIn("init-submodules", re.search(r"needs: (.+)", matrix)[1])
+
     def test_available_report_skips_fallbacks_and_failure_marker(self):
         report = "gcc-linux-rv64gcv-lp64d-fixture-multilib-report.log"
         values = {

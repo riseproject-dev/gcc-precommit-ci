@@ -13,7 +13,6 @@ permissions:
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCHWORK_CHECK_USERNAME: ${{ vars.PATCHWORK_CHECK_USERNAME }}
-  PATCHWORK_FILTER_EMAILS: ${{ vars.PATCHWORK_FILTER_EMAILS }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
 
 jobs:
@@ -81,7 +80,6 @@ jobs:
       start_date: ${{ steps.continue.outputs.start_date }}
 
   fetch_patches:
-    # This is a dedicated self hosted runner that will always* run this on time
     needs: [check_last_runner]
     runs-on: ubuntu-24.04
     concurrency:

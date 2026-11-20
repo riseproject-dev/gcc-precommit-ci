@@ -21,8 +21,11 @@ Review the most recent `Patchworks` workflow on every on-call pass:
    `valid-baseline`, and that all result links point to
    `riseproject-dev/gcc-precommit-ci`.
 
-Use `PATCHWORK_FILTER_EMAILS` only for intentional additional mailbox matching;
-normal RISC-V matching is based on `riscv`/`risc-v` text in the mbox.
+Queue a GCC Patchwork patch when its own subject identifies RISC-V or its diff
+changes a RISC-V target path. Polling, staging, manual patch IDs and downtime
+recovery apply the same rule. A generic patch earlier in the same series may
+be applied as a prerequisite. Only qualifying patches receive their own build
+and Patchwork checks. Out-of-scope IDs produce an empty build queue.
 
 ## Shadow And Production Modes
 
@@ -92,10 +95,11 @@ environment when deploying the runner.
 
 ## Dependency Updates
 
-Publish toolchain changes first, then post-commit, wait for a new valid
-post-commit baseline, and only then update the pre-commit gitlink. When source
-submodules change, bump every `submodules-archive-` restore/save key in both CI
-repositories as applicable.
+Merge shared toolchain changes first. For changes confined to pre-commit patch
+selection, update the pre-commit gitlink to the published toolchain revision.
+For changes that affect baseline comparability, update post-commit and wait for
+a new valid baseline before updating pre-commit. When source submodules change,
+bump the corresponding `submodules-archive-` restore/save keys.
 
 ## Incident Stop Controls
 

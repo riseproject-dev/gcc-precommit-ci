@@ -41,7 +41,6 @@ The normal data flow is:
 | `PATCHWORK_API` | Repository or organization secret | GCC Patchwork check write access for a RISE-managed service account | Post Patchwork check results | Production cutover |
 | `PATCHWORK_CHECK_USERNAME` | Repository variable | Patchwork username, not a token | Identifies checks written by the RISE account during recovery scans | Shadow validation |
 | `PATCHWORK_REPORTING_ENABLED` | Repository variable | Set to `true` only after shadow results are verified | Enables Patchwork writes; any other value skips writes | Shadow testing can run while unset |
-| `PATCHWORK_FILTER_EMAILS` | Repository variable | Comma-separated mailbox list | Optional additional Patchwork mbox matching | Only if mailbox filtering is required |
 | `PATCHWORK_OVERRIDE_USERS` | Repository variable | Comma-separated GitHub logins, without spaces | Allows only designated maintainers to issue manual Patchwork result commands | Production cutover |
 | `RISE_CI_READ_TOKEN` | Repository or organization secret | Read Actions artifacts and metadata from `riseproject-dev/gcc-postcommit-ci` | Download baseline sum files | First pre-commit comparison |
 | `GIST_TOKEN` | Repository or organization secret | Create gists from a RISE-managed account | Store oversized build or summary excerpts | Only needed for large report previews |
