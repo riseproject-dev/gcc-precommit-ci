@@ -25,7 +25,10 @@ on:
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
   PATCH_ID: ${{ inputs.patch_id }}
-  PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
+  PATCHWORK_REPORTING_ENABLED: >-
+    ${{ (vars.PATCHWORK_REPORTING_ENABLED == 'true' ||
+         (github.workflow == 'Patchworks' && github.event_name == 'workflow_dispatch' &&
+          github.sha == vars.PATCHWORK_REPORTING_ENABLED)) && 'true' || 'false' }}
 
 jobs:
   lint:

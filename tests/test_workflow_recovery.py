@@ -83,6 +83,41 @@ def evaluate(expression, values, workspace=None, cancelled=False):
 
 
 class WorkflowRecoveryTests(unittest.TestCase):
+    def test_reporting_can_be_bound_to_a_reviewed_dispatch(self):
+        sha = "1" * 40
+        modes = (
+            (sha, "Patchworks", "workflow_dispatch", sha, "true"),
+            (sha, "Patchworks", "workflow_dispatch", "2" * 40, "false"),
+            (sha, "Patchworks", "schedule", sha, "false"),
+            (sha, "Staging", "workflow_dispatch", sha, "false"),
+            ("true", "Patchworks", "schedule", sha, "true"),
+            ("false", "Patchworks", "workflow_dispatch", sha, "false"),
+        )
+        for name in (
+            "run-checks",
+            "lint",
+            "test-regression",
+            "generate-precommit-summary",
+        ):
+            workflow = (WORKFLOWS / (name + ".yaml")).read_text()
+            match = re.search(
+                r"  PATCHWORK_REPORTING_ENABLED: >-\n((?:    .+\n)+)", workflow
+            )
+            self.assertIsNotNone(match)
+            expr = " ".join(match[1].split())
+            for mode, source, event, commit, expected in modes:
+                with self.subTest(workflow=name, event=event, mode=mode):
+                    result = evaluate(
+                        expr,
+                        {
+                            "vars.PATCHWORK_REPORTING_ENABLED": mode,
+                            "github.workflow": source,
+                            "github.event_name": event,
+                            "github.sha": commit,
+                        },
+                    )
+                    self.assertEqual(result, expected)
+
     def test_summary_requires_original_run_context(self):
         text = (WORKFLOWS / "generate-precommit-summary.yaml").read_text()
         trigger = text.split("\non:\n", 1)[1].split("\nenv:\n", 1)[0]

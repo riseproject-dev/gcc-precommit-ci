@@ -40,7 +40,7 @@ The normal data flow is:
 | --- | --- | --- | --- | --- |
 | `PATCHWORK_API` | Repository or organization secret | GCC Patchwork check write access for a RISE-managed service account | Post Patchwork check results | Production cutover |
 | `PATCHWORK_CHECK_USERNAME` | Repository variable | Patchwork username, not a token | Identifies checks written by the RISE account during recovery scans | Shadow validation |
-| `PATCHWORK_REPORTING_ENABLED` | Repository variable | Set to `true` only after shadow results are verified | Enables Patchwork writes; any other value skips writes | Shadow testing can run while unset |
+| `PATCHWORK_REPORTING_ENABLED` | Repository variable | `false` for shadow, a reviewed full commit SHA for a manual pilot, or `true` for production | Enables reporting for the selected mode | Shadow testing can run while unset |
 | `PATCHWORK_OVERRIDE_USERS` | Repository variable | Comma-separated GitHub logins, without spaces | Allows only designated maintainers to issue manual Patchwork result commands | Production cutover |
 | `RISE_CI_READ_TOKEN` | Repository or organization secret | Read Actions artifacts and metadata from `riseproject-dev/gcc-postcommit-ci` | Download baseline sum files | First pre-commit comparison |
 | `GIST_TOKEN` | Repository or organization secret | Create gists from a RISE-managed account | Store oversized build or summary excerpts | Only needed for large report previews |
@@ -117,7 +117,7 @@ reporting credentials in separate trusted jobs.
    and baseline artifacts.
 3. Configure `RISE_CI_READ_TOKEN` in this repository.
 4. Configure `PATCHWORK_CHECK_USERNAME` for the RISE Patchwork account and
-   leave `PATCHWORK_REPORTING_ENABLED` unset or set to a non-`true` value.
+   leave `PATCHWORK_REPORTING_ENABLED` unset or set it to `false`.
 5. Run a workflow_dispatch or staging pre-commit job against a real Patchwork
    patch and inspect the generated RISE issue, artifact downloads, and skipped
    Patchwork log messages.
@@ -155,7 +155,7 @@ owner in the RISE operations system.
 
 ## Rollback
 
-Set `PATCHWORK_REPORTING_ENABLED` to any value other than `true` to stop
+Set `PATCHWORK_REPORTING_ENABLED=false` to stop
 Patchwork writes while keeping patch fetch, build, and test artifacts running.
 If baseline reads fail, restore service by fixing `RISE_CI_READ_TOKEN` or by
 pausing pre-commit schedules until a valid RISE post-commit baseline is

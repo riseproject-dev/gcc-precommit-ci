@@ -29,7 +29,7 @@ and Patchwork checks. Out-of-scope IDs produce an empty build queue.
 
 ## Shadow And Production Modes
 
-Keep `PATCHWORK_REPORTING_ENABLED` unset or different from `true` during shadow
+Keep `PATCHWORK_REPORTING_ENABLED` unset or set to `false` during shadow
 testing. GitHub issues, artifacts, builds, and comparisons still run, but no
 Patchwork check may be written. Logs must explicitly say that reporting was
 skipped.
@@ -43,6 +43,13 @@ Before enabling writes:
 - verify emitted contexts use the `toolchain-ci-rise-` prefix;
 - run one real patch in shadow mode and compare it with the legacy result;
 - restrict manual result overrides to designated repository maintainers.
+
+To validate publication before enabling all schedules, set the repository variable
+`PATCHWORK_REPORTING_ENABLED` to the full 40-character SHA of the reviewed
+workflow revision, then dispatch `Patchworks` at that revision. Only a manual
+`Patchworks` run with that exact SHA may publish in this mode. Verify the RISE
+check and its target URL on the selected patch before switching the variable to
+`true` for normal production reporting or `false` to stop writes.
 
 Set `PATCHWORK_REPORTING_ENABLED=true` only after those checks. A missing token,
 non-2xx Patchwork response, unexpected username, or legacy `toolchain-ci-rivos-`
