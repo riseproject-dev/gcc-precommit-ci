@@ -141,7 +141,7 @@ jobs:
         id: list_patches
         run: |
           if [ -f ./artifact_names.txt ]; then
-            export PATCHLIST="$(cat artifact_names.txt)"
+            PATCHLIST=$(python ../scripts/patch_matrix.py)
           else
             export PATCHLIST='[]'
           fi
@@ -166,12 +166,12 @@ jobs:
           retention-days: 90
 
     outputs:
-      list_of_patch_names: ${{ steps.list_patches.outputs.patch_list }}
+      patch_targets: ${{ steps.list_patches.outputs.patch_list }}
       end_date: ${{ steps.timestamps.outputs.end_date }}
 
   init-submodules:
     needs: [check_last_runner, fetch_patches]
-    if: ${{ needs.fetch_patches.outputs.list_of_patch_names != '[]' }}
+    if: ${{ needs.fetch_patches.outputs.patch_targets != '[]' }}
     uses: ./.github/workflows/init-submodules.yaml
     secrets: inherit
 
@@ -179,7 +179,7 @@ jobs:
     needs: [check_last_runner, fetch_patches, init-submodules, patch_matrix]
     # Empty queues intentionally skip the downstream jobs. Failed or cancelled
     # processing must retain the old checkpoint so the next scan can retry it.
-    if: ${{ !cancelled() && needs.check_last_runner.result == 'success' && needs.fetch_patches.result == 'success' && (needs.fetch_patches.outputs.list_of_patch_names == '[]' || (needs.init-submodules.result == 'success' && needs.patch_matrix.result == 'success')) }}
+    if: ${{ !cancelled() && needs.check_last_runner.result == 'success' && needs.fetch_patches.result == 'success' && (needs.fetch_patches.outputs.patch_targets == '[]' || (needs.init-submodules.result == 'success' && needs.patch_matrix.result == 'success')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -204,7 +204,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        patch_name: ${{ fromJSON(needs.fetch_patches.outputs.list_of_patch_names) }}
+        include: ${{ fromJSON(needs.fetch_patches.outputs.patch_targets) }}
     uses: ./.github/workflows/run-checks.yaml
     permissions:
       actions: read
@@ -212,6 +212,7 @@ jobs:
       issues: write
     with:
       patch_name: ${{ matrix.patch_name }}
+      patch_id: ${{ matrix.patch_id }}
       baseline_hash: ${{ needs.init-submodules.outputs.baseline_hash }}
       tot_hash: ${{ needs.init-submodules.outputs.tot_hash }}
     secrets: inherit

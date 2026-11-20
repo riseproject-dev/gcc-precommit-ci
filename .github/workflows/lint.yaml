@@ -3,6 +3,9 @@ name: Lint
 on:
   workflow_call:
     inputs:
+      patch_id:
+        required: true
+        type: string
       patch_name:
         required: true
         type: string
@@ -21,6 +24,7 @@ on:
 
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCH_ID: ${{ inputs.patch_id }}
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
 
 jobs:
@@ -42,17 +46,14 @@ jobs:
         with:
           free_up_space: false
 
-      - name: Restore submodules from cache
-        run: |
-          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Restore submodules
-        run: |
-          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
-          unzip cache.zip
-          rm -rf cache.zip
+      - name: Checkout GCC lint tools at the selected baseline
+        uses: actions/checkout@v4
+        with:
+          repository: gcc-mirror/gcc
+          ref: ${{ inputs.baseline_hash }}
+          path: gcc-lint-tools
+          sparse-checkout: contrib
+          persist-credentials: false
 
       - name: Download patches artifact
         uses: actions/download-artifact@v4
@@ -67,16 +68,17 @@ jobs:
       - name: Report start linter
         if: ${{ github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint starting' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'pending' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID"  -desc 'Lint starting' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'pending' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'
 
       # Only lint the last patch in the series since that's where the warning will be displayed
       - name: Lint patch
         id: lint
         run: |
-          let patches_and_metadata_count=$(ls -1 patches | wc -l)
-          let patches_count=$((patches_and_metadata_count / 2))
-          let patch_num=$(printf "%04d" $patches_count)
-          python ./gcc/contrib/check_GNU_style.py "./patches/$(printf '%04d' $patches_count)-patch.patch" 2>&1 | tee "lint_results.txt"
+          # download_patches.sh numbers mboxes in series order.
+          shopt -s nullglob
+          patches=(patches/*-patch.patch)
+          ((${#patches[@]} > 0))
+          python ../gcc-lint-tools/contrib/check_GNU_style.py "${patches[-1]}" > lint_results.txt 2>&1
           if (($(cat lint_results.txt | wc -l) > 0)); then
             echo "lint_failed=true" >> $GITHUB_OUTPUT
           else
@@ -123,7 +125,7 @@ jobs:
       - name: Report linter warning
         if: ${{ steps.lint.outputs.lint_failed == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'warning' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID"  -desc 'Lint failed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'warning' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'
 
       - name: Make lint passed comment
         if: ${{ steps.lint.outputs.lint_failed == 'false' }}
@@ -145,4 +147,4 @@ jobs:
       - name: Report linter success
         if: ${{ steps.lint.outputs.lint_failed == 'false' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Lint passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'success' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID"  -desc 'Lint passed' -iid '${{ inputs.issue_num }}#issuecomment-${{ inputs.lint_comment_id }}' -state 'success' -context 'lint' -token '${{ secrets.PATCHWORK_API }}'

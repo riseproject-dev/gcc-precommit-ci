@@ -3,13 +3,20 @@
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from zipfile import ZipFile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from collect_testsuite_report import collect
+from patch_matrix import patch_targets
+
+
 WORKFLOWS = ROOT / ".github/workflows"
 DOWNLOAD_ACTION = (
     ROOT / ".github/actions/common/download-comparison-artifacts/action.yaml"
@@ -103,17 +110,9 @@ class WorkflowRecoveryTests(unittest.TestCase):
                     + re.escape("}}")
                     + "$",
                 )
-        patches = [
-            block
-            for name, block in step_blocks(
-                WORKFLOWS / "generate-precommit-summary.yaml"
-            )
-            if name == "Download patches artifact"
-        ]
-        self.assertEqual(len(patches), 2)
-        for block in patches:
-            self.assertIn("uses: actions/download-artifact@v4", block)
-            self.assertNotIn("if:", block)
+        self.assertIn("patch_id: ${{ inputs.patch_id }}", caller)
+        self.assertIn(' -pid "$PATCH_ID"', text)
+        self.assertNotIn("debug-url.md", text)
 
     def test_manual_override_consumes_extracted_metadata(self):
         path = WORKFLOWS / "call-patchworks-api.yaml"
@@ -181,62 +180,73 @@ class WorkflowRecoveryTests(unittest.TestCase):
                 text = (WORKFLOWS / workflow).read_text()
                 setup = text.split("\n  init-submodules:\n", 1)[1]
                 expression = condition(setup)
-                output = "needs.fetch_patches.outputs.list_of_patch_names"
+                output = "needs.fetch_patches.outputs.patch_targets"
                 self.assertFalse(evaluate(expression, {output: "[]"}))
                 self.assertTrue(evaluate(expression, {output: '["one-patch"]'}))
                 matrix = text.split("\n  patch_matrix:\n", 1)[1]
                 self.assertIn("init-submodules", re.search(r"needs: (.+)", matrix)[1])
 
-    def test_available_report_skips_fallbacks_and_failure_marker(self):
-        report = "gcc-linux-rv64gcv-lp64d-fixture-multilib-report.log"
-        values = {
-            "inputs.report-artifact-name": report,
-            "steps.same-workflow-binary.outcome": "failure",
-        }
+    def test_only_selected_run_reports_enter_comparison(self):
+        name = "gcc-linux-rv64gcv-lp64d-" + "a" * 40 + "-multilib-report.log"
+        step = named_step(DOWNLOAD_ACTION, "Collect the expected report from this run")
+        self.assertIn("actions/runs/$GITHUB_RUN_ID/artifacts", step)
+        self.assertIn("failed_testsuite.txt", step)
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
-            path = workspace / "riscv-gnu-toolchain/current_logs" / report
-            path.parent.mkdir(parents=True)
-            path.write_text("Testsuite report\n")
-            for name in (
-                "Download report from another workflow",
-                "Download rv32 non-multilib binary",
-                "Download binary from another workflow",
-                "Record missing testsuite report",
-            ):
-                with self.subTest(step=name):
-                    self.assertFalse(
-                        evaluate(
-                            condition(named_step(DOWNLOAD_ACTION, name)),
-                            values,
-                            workspace,
-                        )
-                    )
-            path.unlink()
-            block = named_step(DOWNLOAD_ACTION, "Record missing testsuite report")
-            self.assertTrue(evaluate(condition(block), values, workspace))
-            subprocess.run(
-                ["bash", "-e", "-c", shell_body(block)],
-                cwd=directory,
-                env=dict(os.environ, REPORT_ARTIFACT_NAME=report),
-                check=True,
+            archive = workspace / "report.zip"
+            output = workspace / "current_logs"
+            output.mkdir()
+            text = b"\t\t=== gcc: Unexpected fails for rv64gcv lp64d medlow  ===\n\nSummary\n"
+            with ZipFile(archive, "w") as zipped:
+                zipped.writestr(name, text)
+                zipped.writestr("extra.log", "Unrelated file")
+            collect(archive, name, output)
+            self.assertEqual([p.name for p in output.iterdir()], [name])
+            self.assertEqual((output / name).read_bytes(), text)
+            with ZipFile(archive, "w") as zipped:
+                zipped.writestr(name, b"incomplete without the summary separator")
+            with self.assertRaises(ValueError):
+                collect(archive, name, output)
+            self.assertFalse((output / name).with_suffix(".partial").exists())
+
+    def test_discovery_preserves_patch_ids_for_reporting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            metadata = Path(directory)
+            name = "69792-v2_RISCV_changes-1"
+            path = metadata / name
+            path.write_text("Patch and series metadata\n149346")
+            self.assertEqual(patch_targets([], metadata), [])
+            self.assertEqual(
+                patch_targets([name], metadata),
+                [{"patch_name": name, "patch_id": "149346"}],
             )
-            marker = path.parent / "failed_testsuite.txt"
-            self.assertIn(report + "|Testsuite report artifact", marker.read_text())
+            path.write_text("Patch and series metadata\ninvalid")
+            with self.assertRaises(ValueError):
+                patch_targets([name], metadata)
 
     def test_publishing_errors_are_not_ignored(self):
         paths = list(WORKFLOWS.glob("*.yaml")) + list(
             (ROOT / ".github/actions").rglob("action.yaml")
         )
-        publishing_steps = 0
+        publishing_files = set()
         for path in paths:
             for name, block in step_blocks(path):
                 if "scripts/post_check_to_patchworks.py" not in block:
                     continue
-                publishing_steps += 1
+                publishing_files.add(path.relative_to(ROOT).as_posix())
                 with self.subTest(path=path.name, step=name):
                     self.assertNotIn("continue-on-error: true", block)
-        self.assertGreater(publishing_steps, 15)
+        self.assertEqual(
+            publishing_files,
+            {
+                ".github/actions/report-build-complete-status/action.yaml",
+                ".github/workflows/call-patchworks-api.yaml",
+                ".github/workflows/generate-precommit-summary.yaml",
+                ".github/workflows/lint.yaml",
+                ".github/workflows/run-checks.yaml",
+                ".github/workflows/test-regression.yaml",
+            },
+        )
 
     def test_recovery_checkpoint_advances_only_completed_windows(self):
         text = (WORKFLOWS / "downtime-runner.yaml").read_text()
@@ -245,7 +255,7 @@ class WorkflowRecoveryTests(unittest.TestCase):
         base = {
             "needs.check_last_runner.result": "success",
             "needs.fetch_patches.result": "success",
-            "needs.fetch_patches.outputs.list_of_patch_names": "['fixture']",
+            "needs.fetch_patches.outputs.patch_targets": "['fixture']",
             "needs.init-submodules.result": "success",
             "needs.patch_matrix.result": "success",
         }
@@ -253,7 +263,7 @@ class WorkflowRecoveryTests(unittest.TestCase):
         empty = dict(base)
         empty.update(
             {
-                "needs.fetch_patches.outputs.list_of_patch_names": "[]",
+                "needs.fetch_patches.outputs.patch_targets": "[]",
                 "needs.init-submodules.result": "skipped",
                 "needs.patch_matrix.result": "skipped",
             }

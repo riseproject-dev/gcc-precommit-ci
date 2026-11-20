@@ -3,6 +3,9 @@ name: Run checks
 on:
   workflow_call:
     inputs:
+      patch_id:
+        required: true
+        type: string
       patch_name:
         required: true
         type: string
@@ -18,6 +21,7 @@ on:
 
 env:
   PRECOMMIT_REPOSITORY: ${{ github.repository }}
+  PATCH_ID: ${{ inputs.patch_id }}
   POSTCOMMIT_REPOSITORY: riseproject-dev/gcc-postcommit-ci
   PATCHWORK_REPORTING_ENABLED: ${{ vars.PATCHWORK_REPORTING_ENABLED }}
 
@@ -55,17 +59,11 @@ jobs:
           cp patchworks_metadata/${{ inputs.patch_name }} patches/
         continue-on-error: true
 
-        # patchwork.sourceware.org has been rather flakey lately with regards
-        # to downloading the patches. when it does, wget will fail on the
-        # scripts/download_patches.sh step and should not move the patch from the
-        # patchworks_metadata folder. Retry downloading the patches from
-        # ozlabs
-      - name: Try different server to download patches from
+      - name: Retry downloading the selected patches from Sourceware
         if: ${{ steps.patch-download.outcome == 'failure' }}
         run: |
           rm -rf patches
           mkdir patches
-          sed -i 's/patchwork.sourceware.org/patchwork.ozlabs.org/g' patch_urls/${{ inputs.patch_name }}
           scripts/download_patches.sh -p ${{ inputs.patch_name }}
           cp patchworks_metadata/${{ inputs.patch_name }} patches/
 
@@ -108,7 +106,7 @@ jobs:
           printf "## Patch information\n" >> issue.md
           head -n 3 patches/${{ inputs.patch_name }} >> issue.md
           # Issue closer depends on patch id
-          printf "Patch id: %d\n" $(tail -n 1 patches/${{ inputs.patch_name }}) >> issue.md
+          printf "Patch id: %d\n" "$PATCH_ID" >> issue.md
           printf "## Build Targets\n" >> issue.md
           printf "Some targets are built as multilibs. If a build target ends with \`multilib\`, please refer to the table below to see all the targets within that multilib.\n" >> issue.md
           printf "|Target name|\`-march\` string|\n" >> issue.md
@@ -203,6 +201,7 @@ jobs:
       issues: write
     with:
       patch_name: ${{ inputs.patch_name }}
+      patch_id: ${{ inputs.patch_id }}
       issue_num: ${{ needs.create-issue.outputs.issue_num }}
       lint_comment_id: ${{ needs.create-issue.outputs.lint_comment_id }}
       additional_info: ${{ needs.create-issue.outputs.additional_info }}
@@ -224,17 +223,15 @@ jobs:
         with:
           free_up_space: false
 
-      - name: Restore submodules from cache
-        run: |
-          gh run download --repo ${{ github.repository }} "${{ github.run_id }}" --name "gcc-sources-${{ inputs.baseline_hash }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Restore submodules
-        run: |
-          rm -rf .git binutils dejagnu gcc gdb glibc newlib qemu
-          unzip cache.zip
-          rm -rf cache.zip
+      - name: Checkout the baseline from GCC
+        uses: actions/checkout@v4
+        with:
+          repository: gcc-mirror/gcc
+          ref: ${{ inputs.baseline_hash }}
+          path: riscv-gnu-toolchain/gcc
+          persist-credentials: false
+          filter: blob:none
+          fetch-depth: 0
 
       - name: Download patches artifact
         uses: actions/download-artifact@v4
@@ -242,10 +239,15 @@ jobs:
           name: ${{ inputs.patch_name }}-downloaded-patches
           path: ./riscv-gnu-toolchain/patches
 
-      - name: Checkout gcc hash
+      - name: Check the selected GCC revisions
+        env:
+          BASELINE: ${{ inputs.baseline_hash }}
+          TIP: ${{ inputs.tot_hash }}
         run: |
           cd gcc
-          git checkout ${{ inputs.baseline_hash }}
+          [[ "$BASELINE" =~ ^[0-9a-f]{7,40}$ && "$TIP" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$BASELINE^{commit}")"
+          git cat-file -e "$TIP^{commit}"
 
       - name: Apply patches to baseline
         id: apply-baseline
@@ -346,17 +348,17 @@ jobs:
       - name: Report patch failed to apply to tip of tree
         if: ${{ steps.apply-baseline.outputs.apply_baseline == 'true' && steps.apply-tip-of-tree.outputs.apply_tot == 'false' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply to tip of tree.' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'warning' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID" -desc 'Patch failed to apply to tip of tree.' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'warning' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
 
       - name: Report patch applied to tip of tree successfully
         if: ${{ steps.apply-tip-of-tree.outputs.apply_tot == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch applied' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'success' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID" -desc 'Patch applied' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'success' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
 
       - name: Report patch failed to apply anywhere
         if: ${{ steps.apply-failure.outputs.apply_failure == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }}) -desc 'Patch failed to apply' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'fail' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID" -desc 'Patch failed to apply' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ needs.create-issue.outputs.apply_comment_id }}' -state 'fail' -context 'apply-patch' -token '${{ secrets.PATCHWORK_API }}'
 
       - name: Add apply-failure label if patch failed to apply anywhere
         if: ${{ steps.apply-failure.outputs.apply_failure == 'true' }}
@@ -457,7 +459,7 @@ jobs:
       - name: Report test warning on build only
         if: ${{ needs.apply.outputs.build_only == 'true' && github.workflow != 'Staging' }}
         run: |
-          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid $(tail -n 1 patches/${{ inputs.patch_name }})  -desc 'Testing skipped' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ steps.test-comment.outputs.comment-id }}' -state 'warning' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
+          python scripts/post_check_to_patchworks.py -event ${{ github.event_name }} -repo "${PRECOMMIT_REPOSITORY}" -pid "$PATCH_ID"  -desc 'Testing skipped' -iid '${{ needs.create-issue.outputs.issue_num }}#issuecomment-${{ steps.test-comment.outputs.comment-id }}' -state 'warning' -context 'test' -token '${{ secrets.PATCHWORK_API }}'
 
         # If the patch does not apply to baseline, we need to run the build warning
         # comparisons against tip of tree and not the baseline hash.
@@ -524,6 +526,7 @@ jobs:
       issues: write
     with:
       patch_name: ${{ inputs.patch_name }}
+      patch_id: ${{ inputs.patch_id }}
       mode: ${{ matrix.mode }}
       target: ${{ matrix.target }}
       baseline_hash: ${{ inputs.baseline_hash }}
@@ -536,7 +539,9 @@ jobs:
       run_on_self_hosted: true
       tot_hash: ${{ inputs.tot_hash }}
       additional_info: ${{ needs.create-issue.outputs.additional_info }}
-    secrets: inherit
+    secrets:
+      PATCHWORK_API: ${{ secrets.PATCHWORK_API }}
+      GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
 
   creg-sh: # Vector self hosted runners multilib build
     needs: [download_patches, create-issue, apply, initialize-build-test-comments]
@@ -554,6 +559,7 @@ jobs:
       issues: write
     with:
       patch_name: ${{ inputs.patch_name }}
+      patch_id: ${{ inputs.patch_id }}
       mode: ${{ matrix.mode }}
       target: ${{ matrix.target }}
       baseline_hash: ${{ inputs.baseline_hash }}
@@ -566,7 +572,9 @@ jobs:
       run_on_self_hosted: true
       tot_hash: ${{ inputs.tot_hash }}
       additional_info: ${{ needs.create-issue.outputs.additional_info }}
-    secrets: inherit
+    secrets:
+      PATCHWORK_API: ${{ secrets.PATCHWORK_API }}
+      GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
 
   summarize:
     if: ${{ !cancelled() && needs.apply.outputs.apply_failure == 'false' }} # Generate github issues even when some (or all) targets fail to build. Ignore apply failures since there are no artifacts expected.
@@ -578,6 +586,7 @@ jobs:
     uses: ./.github/workflows/generate-precommit-summary.yaml
     with:
       patch_name: ${{ inputs.patch_name }}
+      patch_id: ${{ inputs.patch_id }}
       baseline_hash: ${{ inputs.baseline_hash }}
       patch_applied_gcchash: ${{ needs.apply.outputs.patch_applied_gcchash }}
       build_only: ${{ needs.apply.outputs.build_only }}
