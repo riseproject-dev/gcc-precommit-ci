@@ -1,0 +1,58 @@
+[
+  {
+    "mode": "linux",
+    "arch": "rv32gcv",
+    "abi": "ilp32d",
+    "baseline": "gcc-linux-rv64gcv-lp64d-{sha}-multilib-sum-files",
+    "candidate": "gcc-linux-rv64gcv-lp64d-{sha}-multilib-sum-files"
+  },
+  {
+    "mode": "linux",
+    "arch": "rv64gcv",
+    "abi": "lp64d",
+    "baseline": "gcc-linux-rv64gcv-lp64d-{sha}-multilib-sum-files",
+    "candidate": "gcc-linux-rv64gcv-lp64d-{sha}-multilib-sum-files"
+  },
+  {
+    "mode": "linux",
+    "arch": "rv32gc_zba_zbb_zbc_zbs",
+    "abi": "ilp32d",
+    "baseline": "gcc-linux-rv32gc_zba_zbb_zbc_zbs-ilp32d-{sha}-non-multilib-sum-files",
+    "candidate": "gcc-linux-rv64gc_zba_zbb_zbc_zbs-lp64d-{sha}-multilib-sum-files"
+  },
+  {
+    "mode": "linux",
+    "arch": "rv64gc_zba_zbb_zbc_zbs",
+    "abi": "lp64d",
+    "baseline": "gcc-linux-rv64gc_zba_zbb_zbc_zbs-lp64d-{sha}-non-multilib-sum-files",
+    "candidate": "gcc-linux-rv64gc_zba_zbb_zbc_zbs-lp64d-{sha}-multilib-sum-files"
+  },
+  {
+    "mode": "newlib",
+    "arch": "rv32imc_zba_zbb_zbc_zbs",
+    "abi": "ilp32",
+    "baseline": "gcc-newlib-rv64imc_zba_zbb_zbc_zbs-lp64d-{sha}-multilib-sum-files",
+    "candidate": "gcc-newlib-rv64gcv-lp64d-{sha}-multilib-sum-files"
+  },
+  {
+    "mode": "newlib",
+    "arch": "rv32gc",
+    "abi": "ilp32d",
+    "baseline": "gcc-newlib-rv32gc-ilp32d-{sha}-non-multilib-sum-files",
+    "candidate": "gcc-newlib-rv64gcv-lp64d-{sha}-multilib-sum-files"
+  },
+  {
+    "mode": "newlib",
+    "arch": "rv64gc",
+    "abi": "lp64d",
+    "baseline": "gcc-newlib-rv64gc-lp64d-{sha}-non-multilib-sum-files",
+    "candidate": "gcc-newlib-rv64gcv-lp64d-{sha}-multilib-sum-files"
+  },
+  {
+    "mode": "newlib",
+    "arch": "rv64gcv",
+    "abi": "lp64d",
+    "baseline": "gcc-newlib-rv64gcv-lp64d-{sha}-multilib-sum-files",
+    "candidate": "gcc-newlib-rv64gcv-lp64d-{sha}-multilib-sum-files"
+  }
+]

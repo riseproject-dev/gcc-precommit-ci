@@ -183,31 +183,37 @@ class WorkflowRecoveryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("patch_id=12345", output.read_text())
 
-    def test_invalid_summary_cannot_report_success(self):
-        block = named_step(
-            WORKFLOWS / "generate-precommit-summary.yaml", "Report Failure"
-        )
-        expression = condition(block)
-        for labels in ("invalid", "resolved-regressions,invalid", "testsuite-failure"):
-            with self.subTest(labels=labels):
-                self.assertTrue(
-                    evaluate(
-                        expression,
-                        {
-                            "github.workflow": "Patchworks",
-                            "steps.issue-labels.outputs.issue_labels": labels,
-                        },
-                    )
-                )
-        self.assertFalse(
-            evaluate(
-                expression,
-                {
-                    "github.workflow": "Patchworks",
-                    "steps.issue-labels.outputs.issue_labels": "resolved-regressions",
-                },
-            )
-        )
+    def test_final_patchwork_state_comes_from_published_verdict(self):
+        workflow = WORKFLOWS / "generate-precommit-summary.yaml"
+        block = named_step(workflow, "Publish testsuite verdict")
+        self.assertIn("STATE: ${{ steps.verdict.outputs.state }}", block)
+        self.assertIn('-state "$STATE"', block)
+        expr = condition(block)
+        values = {
+            "github.workflow": "Patchworks",
+            "steps.test-report.outcome": "success",
+            "steps.verdict.outcome": "success",
+        }
+        self.assertTrue(evaluate(expr, values))
+        for key, value in (
+            ("github.workflow", "Staging"),
+            ("steps.test-report.outcome", "failure"),
+            ("steps.verdict.outcome", "skipped"),
+        ):
+            self.assertFalse(evaluate(expr, {**values, key: value}))
+
+    def test_summary_uses_comparison_job_artifact_ids(self):
+        workflow = WORKFLOWS / "generate-precommit-summary.yaml"
+        for name, key in (
+            ("Download summaries artifact", "summaries"),
+            ("Download current logs artifact", "current_logs"),
+            ("Download verified comparison", "evidence"),
+        ):
+            output = f"needs.compare-artifacts.outputs.{key}_artifact_id"
+            block = named_step(workflow, name)
+            self.assertIn("artifact-ids: ${{ " + output + " }}", block)
+            self.assertIn(f"if: {output} != ''", block)
+            self.assertIn("merge-multiple: true", block)
 
     def test_empty_patch_selection_skips_build_setup(self):
         for workflow in ("patchworks.yaml", "downtime-runner.yaml"):

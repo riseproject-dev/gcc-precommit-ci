@@ -62,6 +62,18 @@ as passing tests.
 
 ## Failure Triage
 
+Read the testsuite comment and its linked comparison evidence before assigning
+a failure to the patch. The Patchwork `test` check uses the following outcomes.
+
+| State | Meaning |
+| --- | --- |
+| `fail` | The raw DejaGnu results show at least one matching subtest changing from PASS to FAIL. The comment identifies any incomplete targets separately. |
+| `warning` | Results need review. A test may be newly observed, a build may have failed, or a comparable baseline or testsuite result may be missing. |
+| `success` | The expected matrix was compared and has no verified regression or new result awaiting review. Known failures may still be present in both runs. |
+
+Use the build check for the affected target to diagnose a build failure. Track
+reproducible GCC defects in the status issue or upstream bug tracker.
+
 - Apply failures: check series order and prerequisites. Distinguish a patch that
   no longer applies to trunk from an artifact/download failure.
 - Build or testsuite failures: compare with the exact post-commit baseline and
